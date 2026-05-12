@@ -195,7 +195,14 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
             # an Indexed CS lookup stream elsewhere in the document (reliable).
             if not is_image and not is_icc_profile and not is_content_stream:
                 if obj.type == PdfObjType.Stream and doc.is_palette_lookup(num):
-                    is_palette = True
+                    pass  # leave as plain stream — palette shown on the array parent
+
+    # Detect Indexed color space array: [/Indexed base_cs hival lookup]
+    if obj and obj.type == PdfObjType.Array:
+        if (len(obj.arr) >= 4
+                and obj.arr[0].is_name()
+                and obj.arr[0].sval == "Indexed"):
+            is_palette = True
 
     return {
         "detail": detail,
@@ -271,23 +278,47 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
 
 @app.get("/api/palette/{upload_id}/{num}/{gen}")
 def get_palette(upload_id: str, num: int, gen: int) -> dict[str, Any]:
-    """Return palette entries for an Indexed color space lookup stream."""
+    """Return palette entries for an Indexed color space array object."""
     doc = _sessions.get(upload_id)
     if doc is None:
         raise HTTPException(404, "Session not found")
 
     obj = doc.resolve_num(num, gen)
-    if obj is None or obj.type != PdfObjType.Stream:
-        raise HTTPException(404, "Object not found or not a stream")
+    if obj is None:
+        raise HTTPException(404, "Object not found")
 
-    raw = obj.stream_raw.rstrip(b'\x00\x09\x0a\x0c\x0d\x20')
+    # Expect [/Indexed base_cs hival lookup]
+    if obj.type != PdfObjType.Array:
+        raise HTTPException(422, "Not an Indexed color space array")
+    if len(obj.arr) < 4 or not obj.arr[0].is_name() or obj.arr[0].sval != "Indexed":
+        raise HTTPException(422, "Not an Indexed color space array")
+
+    hival = int(obj.arr[2].ival) if obj.arr[2].is_int() else None
+    lookup_ref = obj.arr[3]
+
+    # Resolve the lookup table (stream reference or inline string)
+    if lookup_ref.is_ref():
+        lookup = doc.resolve_num(lookup_ref.ref.num, lookup_ref.ref.gen)
+        if lookup is None:
+            raise HTTPException(404, "Palette lookup stream not found")
+        raw = lookup.stream_raw
+    elif lookup_ref.is_str():
+        raw = lookup_ref.sval.encode("latin-1")
+    else:
+        raise HTTPException(422, "Unsupported palette lookup format")
+
+    # Trim to exact entry count using hival if available
+    if hival is not None:
+        raw = raw[: (hival + 1) * 3]
+    else:
+        raw = raw.rstrip(b'\x00\x09\x0a\x0c\x0d\x20')
+
     if len(raw) == 0 or len(raw) % 3 != 0:
-        raise HTTPException(422, "Not a valid RGB palette stream")
+        raise HTTPException(422, "Not a valid RGB palette")
 
     entries = []
     for i in range(0, len(raw), 3):
         r, g, b = raw[i], raw[i + 1], raw[i + 2]
-        # Compute luminance to decide label text color
         lum = 0.299 * r + 0.587 * g + 0.114 * b
         entries.append({
             "index": i // 3,
@@ -299,7 +330,7 @@ def get_palette(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     return {
         "entry_count": len(entries),
         "channels": 3,
-        "raw_size": len(obj.stream_raw),
+        "raw_size": len(raw),
         "entries": entries,
     }
 
