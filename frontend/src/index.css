@@ -292,6 +292,15 @@ html, body, #root {
   background: var(--bg2);
 }
 
+/* Content stream section — scrollable, shares space with text pane */
+.detail-cs-section {
+  flex: 1 1 50%;
+  min-height: 120px;
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+}
+
 /* Text section — always shown, takes remaining space */
 .detail-text-section {
   flex: 1;
@@ -769,7 +778,7 @@ html, body, #root {
 .cs-table-note { font-size: 9px; text-transform: none; letter-spacing: 0; font-weight: 400; }
 
 /* Operator table */
-.cs-ops-wrap { overflow-x: auto; }
+.cs-ops-wrap { overflow-x: auto; max-height: none; }
 .cs-ops-table {
   border-collapse: collapse;
   font-family: var(--font-mono);
