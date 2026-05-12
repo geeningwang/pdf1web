@@ -447,6 +447,9 @@ class PdfDocument:
                         if target is not None and target.type == PdfObjType.Array:
                             _check_indexed_arr(target.arr, result)
         return frozenset(result)
+
+    # ------------------------------------------------------------------
+    def get_object_detail(self, num: int, gen: int = 0) -> str:
         obj = self.resolve_num(num, gen)
         if obj is None:
             return f"(object {num} {gen} R could not be resolved)"
