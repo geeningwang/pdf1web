@@ -26,11 +26,39 @@ export interface ObjectDetailResponse {
   gen_num: number
 }
 
+export interface IccTag {
+  sig: string
+  name: string
+  type_sig: string
+  offset: number
+  size: number
+  summary: string
+}
+
+export interface IccSegment {
+  label: string
+  offset: number
+  size: number
+  color: string
+}
+
 export interface IccData {
   description: string | null
+  copyright: string | null
+  manufacturer_desc: string | null
+  device_model_desc: string | null
+  viewing_conditions_desc: string | null
+  technology: string | null
+  technology_name: string | null
+  luminance_y: number | null
+  observer: string | null
+  view_illuminant: string | null
+  profile_class: string | null
   color_space: string
   pcs: string
+  total_size: number
   white_point: [number, number, number] | null
+  black_point: [number, number, number] | null
   primaries: {
     r_xyz: [number, number, number] | null
     g_xyz: [number, number, number] | null
@@ -44,6 +72,9 @@ export interface IccData {
     g: number[] | null
     b: number[] | null
   }
+  trc_summary: string | null
+  tags_directory: IccTag[]
+  structure: IccSegment[]
 }
 
 /* -----------------------------------------------------------------------

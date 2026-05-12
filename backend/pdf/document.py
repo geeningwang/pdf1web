@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .filters import flat_decode, ascii_hex_decode, ascii85_decode, dct_decode
+from .icc import parse_icc_profile
 from .objects import PdfObject, PdfObjType, PdfRef
 from .parser import PdfParser
 from .reader import PdfReader
@@ -115,10 +116,20 @@ def _detail(obj: PdfObject, indent: int = 0) -> str:
                 lines.append(f"[{len(decoded)} bytes decoded]")
                 if _is_binary(decoded):
                     total = len(decoded)
-                    capped = total > _HEX_DUMP_MAX
-                    label = f"--- decoded hex ({total} bytes" + (", first 64K shown" if capped else "") + ") ---"
-                    lines.append(label)
-                    lines.append(_hex_dump(decoded))
+                    # Check for ICC profile — show annotated hex
+                    if len(decoded) >= 40 and decoded[36:40] == b'acsp':
+                        icc_info = parse_icc_profile(decoded)
+                        if icc_info and icc_info.get('structure'):
+                            lines.append(f'--- ICC profile, annotated hex ({total} bytes) ---')
+                            lines.append(_icc_annotated_hex(decoded, icc_info['structure']))
+                        else:
+                            lines.append(f'--- decoded hex ({total} bytes) ---')
+                            lines.append(_hex_dump(decoded))
+                    else:
+                        capped = total > _HEX_DUMP_MAX
+                        label = f'--- decoded hex ({total} bytes' + (', first 64K shown' if capped else '') + ') ---'
+                        lines.append(label)
+                        lines.append(_hex_dump(decoded))
                 else:
                     show = min(len(decoded), 4096)
                     lines.append(
@@ -165,9 +176,34 @@ def _bytes_to_printable(data: bytes) -> str:
 
 
 _HEX_DUMP_MAX = 64 * 1024  # 64 KiB
+_ICC_SECTION_CAP = 320      # max bytes shown per ICC structure region
 
 
-def _hex_dump(data: bytes) -> str:
+def _hex_dump_section(data: bytes, start_addr: int, cap: int = _ICC_SECTION_CAP) -> str:
+    """Hex dump a byte slice with absolute addresses, capped at *cap* bytes."""
+    lines: list[str] = []
+    chunk = data[:cap]
+    for i in range(0, len(chunk), 16):
+        row = chunk[i:i + 16]
+        hex_part = ' '.join(f'{b:02X}' for b in row)
+        lines.append(f'{start_addr + i:04X}: {hex_part}')
+    if len(data) > cap:
+        lines.append(f'     … {len(data) - cap} more bytes …')
+    return '\n'.join(lines)
+
+
+def _icc_annotated_hex(data: bytes, structure: list[dict]) -> str:
+    """Generate section-annotated hex dump for an ICC profile."""
+    lines: list[str] = []
+    for seg in sorted(structure, key=lambda s: s['offset']):
+        off = seg['offset']
+        sz = seg['size']
+        end = off + sz - 1
+        lines.append(f"=== {seg['label']} ===")
+        lines.append(f'    0x{off:04X} – 0x{end:04X}  ({sz} bytes)')
+        lines.append(_hex_dump_section(data[off:off + sz], start_addr=off))
+        lines.append('')
+    return '\n'.join(lines)
     truncated = len(data) > _HEX_DUMP_MAX
     chunk = data[:_HEX_DUMP_MAX]
     lines: list[str] = []
