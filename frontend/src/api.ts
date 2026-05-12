@@ -180,6 +180,30 @@ export interface CcittData {
   structure: CcittStructureSegment[]
 }
 
+export interface FlatParam {
+  key: string
+  value: string
+  meaning: string
+}
+
+export interface FlatStructureSegment {
+  label: string
+  offset: number
+  size: number
+  color: string
+}
+
+export interface FlatData {
+  predictor: number
+  predictor_name: string
+  columns: number | null
+  colors: number
+  bpc: number
+  raw_size: number
+  params: FlatParam[]
+  structure: FlatStructureSegment[]
+}
+
 export interface ImageDetailData {
   width: number | null
   height: number | null
@@ -194,6 +218,7 @@ export interface ImageDetailData {
     frame_info: JpegFrameInfo | null
   } | null
   ccitt: CcittData | null
+  flat: FlatData | null
 }
 
 export async function fetchImageDetail(

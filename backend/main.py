@@ -23,8 +23,9 @@ from pdf.document import PdfDocument, _decode_stream, _detail, _is_binary
 from pdf.icc import parse_icc_profile
 from pdf.jpeg import parse_jpeg
 from pdf.ccitt import parse_ccitt
+from pdf.flat import parse_flat_image
 from pdf.content_stream import parse_content_stream, is_content_stream as _is_content_stream_data
-from pdf.objects import PdfObjType
+from pdf.objects import PdfObjType, PdfObject
 from pdf.xref import XrefEntryType
 
 app = FastAPI(title="pdf1web API")
@@ -360,6 +361,40 @@ def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
             damaged_rows_before_error=damaged_rows,
         )
 
+    flat_data: dict | None = None
+    if filter_name == "FlateDecode":
+        try:
+            _flat_decoded = zlib.decompress(obj.stream_raw)
+            if decoded_size is None:
+                decoded_size = len(_flat_decoded)
+        except Exception:
+            pass
+        dp = obj.get("DecodeParms")
+        predictor = 1
+        flat_cols = width
+        flat_colors = 1
+        flat_bpc = bpc or 8
+        if dp.is_dict():
+            pred_obj = dp.get("Predictor")
+            if pred_obj.is_int():
+                predictor = int(pred_obj.ival)
+            cols_obj = dp.get("Columns")
+            if cols_obj.is_int():
+                flat_cols = int(cols_obj.ival)
+            colors_obj = dp.get("Colors")
+            if colors_obj.is_int():
+                flat_colors = int(colors_obj.ival)
+            bpc_obj2 = dp.get("BitsPerComponent")
+            if bpc_obj2.is_int():
+                flat_bpc = int(bpc_obj2.ival)
+        flat_data = parse_flat_image(
+            obj.stream_raw,
+            predictor=predictor,
+            columns=flat_cols,
+            colors=flat_colors,
+            bpc=flat_bpc,
+        )
+
     return {
         "width": width,
         "height": height,
@@ -370,6 +405,7 @@ def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "decoded_size": decoded_size,
         "jpeg": jpeg_data,
         "ccitt": ccitt_data,
+        "flat": flat_data,
     }
 
 
@@ -422,12 +458,26 @@ def get_image(upload_id: str, num: int, gen: int) -> Response:
     height = int(h_obj.ival)
     bpc = int(bpc_obj.ival) if bpc_obj.is_int() else 8
 
-    cs = cs_obj.sval if cs_obj.is_name() else ""
-    # Resolve indirect ColorSpace reference if needed
-    if cs_obj.is_array() and cs_obj.arr and cs_obj.arr[0].is_name():
-        cs = cs_obj.arr[0].sval
+    # Fully resolve ColorSpace (may be indirect reference)
+    cs_resolved = _resolve_cs(doc, cs_obj)
 
-    channels = 3 if cs in ("DeviceRGB", "RGB") else 1  # grayscale default
+    # Detect Indexed color space: [/Indexed base_cs hival lookup]
+    if (cs_resolved.is_array() and cs_resolved.arr
+            and cs_resolved.arr[0].is_name()
+            and cs_resolved.arr[0].sval == "Indexed"):
+        rgb_pixels, channels = _apply_indexed_palette(doc, cs_resolved.arr, decoded)
+        if rgb_pixels is not None:
+            decoded = rgb_pixels
+            bpc = 8
+        else:
+            channels = 1  # fall back to grayscale indices
+    else:
+        cs = ""
+        if cs_resolved.is_name():
+            cs = cs_resolved.sval
+        elif cs_resolved.is_array() and cs_resolved.arr and cs_resolved.arr[0].is_name():
+            cs = cs_resolved.arr[0].sval
+        channels = 3 if cs in ("DeviceRGB", "RGB", "CalRGB") else 1
 
     # Expand packed 1-bit data to 8-bit so _raw_to_png can handle it
     if bpc == 1:
@@ -440,6 +490,82 @@ def get_image(upload_id: str, num: int, gen: int) -> Response:
         raise HTTPException(422, f"Cannot convert to PNG: {exc}") from exc
 
     return Response(content=png_data, media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# Color space helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_cs(doc: Any, cs_obj: PdfObject) -> PdfObject:
+    """Follow indirect references for ColorSpace and return the resolved object."""
+    if cs_obj.type == PdfObjType.Reference:
+        resolved = doc.resolve_num(cs_obj.ref.num, cs_obj.ref.gen)
+        return resolved if resolved is not None else cs_obj
+    return cs_obj
+
+
+def _apply_indexed_palette(
+    doc: Any, cs_arr: list, raw_pixels: bytes
+) -> tuple[bytes, int] | tuple[None, None]:
+    """Map Indexed color space pixel indices through the palette to RGB/gray bytes.
+
+    cs_arr is the array [/Indexed, base_cs, hival, lookup].
+    Returns (mapped_bytes, channels) or (None, None) on failure.
+    """
+    if len(cs_arr) < 4:
+        return None, None
+
+    base_cs_obj = _resolve_cs(doc, cs_arr[1])
+    lookup_obj = cs_arr[3]
+
+    # Determine number of channels from the base color space
+    cs_name = ""
+    if base_cs_obj.is_name():
+        cs_name = base_cs_obj.sval
+    elif base_cs_obj.is_array() and base_cs_obj.arr and base_cs_obj.arr[0].is_name():
+        cs_name = base_cs_obj.arr[0].sval
+        # ICCBased: check N in stream dict
+        if cs_name == "ICCBased" and len(base_cs_obj.arr) >= 2:
+            icc_ref = _resolve_cs(doc, base_cs_obj.arr[1])
+            if icc_ref.type == PdfObjType.Stream:
+                n_obj = icc_ref.dict.get("N")
+                channels = int(n_obj.ival) if n_obj and n_obj.is_int() else 3
+            else:
+                channels = 3
+        else:
+            channels = 3
+    else:
+        channels = 1
+
+    if cs_name in ("DeviceRGB", "CalRGB"):
+        channels = 3
+    elif cs_name == "DeviceCMYK":
+        channels = 4
+    elif cs_name in ("DeviceGray", "CalGray"):
+        channels = 1
+    # (ICCBased already handled above, default is 3)
+
+    # Resolve lookup table
+    lookup_obj = _resolve_cs(doc, lookup_obj)
+    if lookup_obj.type == PdfObjType.Stream:
+        palette = _decode_stream(lookup_obj) or lookup_obj.stream_raw
+    elif lookup_obj.is_str():
+        palette = lookup_obj.sval.encode("latin-1")
+    else:
+        return None, None
+
+    if not palette:
+        return None, None
+
+    # Map each index byte through the palette
+    result = bytearray(len(raw_pixels) * channels)
+    for i, idx in enumerate(raw_pixels):
+        src = idx * channels
+        dst = i * channels
+        if src + channels <= len(palette):
+            result[dst:dst + channels] = palette[src:src + channels]
+
+    return bytes(result), channels
 
 
 # ---------------------------------------------------------------------------

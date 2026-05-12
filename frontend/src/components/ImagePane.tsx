@@ -1,5 +1,5 @@
 import React from 'react'
-import type { ImageDetailData, JpegStructureSegment, CcittStructureSegment } from '../api'
+import type { ImageDetailData, JpegStructureSegment, CcittStructureSegment, FlatStructureSegment } from '../api'
 
 // ------------------------------------------------------------------ helpers
 
@@ -85,6 +85,38 @@ function CcittStructBar({ segs, total }: { segs: CcittStructureSegment[]; total:
   )
 }
 
+// ------------------------------------------------------------------ FLAT structure bar
+
+const FLAT_LEGEND = [
+  { color: 'flat', label: 'Compressed pixel data (Deflate)' },
+]
+
+function FlatStructBar({ segs, total }: { segs: FlatStructureSegment[]; total: number }) {
+  return (
+    <div>
+      <div className="img-struct-bar">
+        {segs.map((s, i) => (
+          <div
+            key={i}
+            className={`img-struct-seg img-seg-${s.color}`}
+            style={{ flex: Math.max(s.size, 2) }}
+            title={`${s.label}\n(${s.size} B)`}
+          />
+        ))}
+      </div>
+      <div className="img-struct-legend">
+        {FLAT_LEGEND.map(l => (
+          <span key={l.color} className="img-legend-item">
+            <span className={`img-legend-dot img-seg-${l.color}`} />
+            {l.label}
+          </span>
+        ))}
+        <span className="img-legend-item img-legend-total">{total.toLocaleString()} B compressed</span>
+      </div>
+    </div>
+  )
+}
+
 // ------------------------------------------------------------------ component
 
 interface Props {
@@ -140,6 +172,11 @@ const ImagePane: React.FC<Props> = ({ data }) => {
       {/* CCITT structure bar */}
       {data.ccitt && data.ccitt.structure.length > 0 && (
         <CcittStructBar segs={data.ccitt.structure} total={data.ccitt.raw_size} />
+      )}
+
+      {/* FlateDecode structure bar */}
+      {data.flat && data.flat.structure.length > 0 && (
+        <FlatStructBar segs={data.flat.structure} total={data.flat.raw_size} />
       )}
 
       {/* Metadata table */}
@@ -205,6 +242,36 @@ const ImagePane: React.FC<Props> = ({ data }) => {
               <tbody>
                 {data.ccitt.params.map((p, i) => (
                   <tr key={i} className="img-segs-row img-seg-row-ccitt">
+                    <td className="img-td-name">{p.key}</td>
+                    <td className="img-td-addr">{p.value}</td>
+                    <td className="img-td-summary">{p.meaning}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {/* FlateDecode parameter table */}
+      {data.flat && (
+        <>
+          <div className="img-section-label">
+            FlateDecode Parameters
+            <span className="img-ccitt-standard"> · {data.flat.predictor_name}</span>
+          </div>
+          <div className="img-segs-wrap">
+            <table className="img-segs-table">
+              <thead>
+                <tr>
+                  <th>DecodeParm</th>
+                  <th>Value</th>
+                  <th>Meaning</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.flat.params.map((p, i) => (
+                  <tr key={i} className="img-segs-row img-seg-row-flat">
                     <td className="img-td-name">{p.key}</td>
                     <td className="img-td-addr">{p.value}</td>
                     <td className="img-td-summary">{p.meaning}</td>
