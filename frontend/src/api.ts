@@ -22,6 +22,7 @@ export interface ObjectDetailResponse {
   detail: string
   is_image: boolean
   is_icc_profile: boolean
+  is_content_stream: boolean
   image_filter: string | null
   obj_num: number
   gen_num: number
@@ -201,6 +202,39 @@ export async function fetchImageDetail(
   gen: number,
 ): Promise<ImageDetailData | null> {
   const res = await fetch(`${BASE}/image_detail/${uploadId}/${num}/${gen}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+export interface ContentStreamOp {
+  op: string
+  category: string
+  color: string
+  desc: string
+  summary: string
+}
+
+export interface ContentStreamStructSeg {
+  label: string
+  color: string
+  count: number
+  size: number
+}
+
+export interface ContentStreamData {
+  operations: ContentStreamOp[]
+  total_ops: number
+  truncated: boolean
+  structure: ContentStreamStructSeg[]
+  category_counts: Record<string, number>
+}
+
+export async function fetchContentStream(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<ContentStreamData | null> {
+  const res = await fetch(`${BASE}/content_stream/${uploadId}/${num}/${gen}`)
   if (!res.ok) return null
   return res.json()
 }

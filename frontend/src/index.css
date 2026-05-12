@@ -700,3 +700,125 @@ html, body, #root {
 .img-td-summary { color: var(--text); white-space: normal; max-width: 280px; }
 
 .img-ccitt-standard { color: var(--text-dim); font-size: 10px; font-weight: 400; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Content stream pane
+   ═══════════════════════════════════════════════════════════════════════════ */
+.cs-pane { padding: 8px 0; }
+
+.cs-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px 6px;
+}
+.cs-title { font-size: 12px; font-weight: 600; color: var(--text); }
+.cs-subtitle { font-size: 11px; color: var(--text-dim); }
+
+/* Structure bar */
+.cs-struct-bar {
+  display: flex;
+  height: 14px;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 0 8px 4px;
+  gap: 1px;
+}
+.cs-struct-seg { min-width: 2px; cursor: default; }
+
+.cs-struct-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 0 8px 4px;
+}
+.cs-legend-item { display: flex; align-items: center; gap: 4px; }
+.cs-legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.cs-legend-total { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* Category summary chips */
+.cs-cat-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 8px 6px;
+}
+.cs-cat-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: rgba(255,255,255,0.04);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+.cs-cat-chip strong { color: var(--text); font-weight: 600; }
+
+/* Section label */
+.cs-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 6px 8px 4px;
+}
+.cs-table-note { font-size: 9px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+/* Operator table */
+.cs-ops-wrap { overflow-x: auto; }
+.cs-ops-table {
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  width: 100%;
+}
+.cs-ops-table th {
+  padding: 3px 8px 3px 4px;
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.cs-ops-table td { padding: 2px 8px 2px 4px; }
+.cs-ops-row { border-left: 3px solid transparent; }
+
+/* Segment / structure bar colors */
+.cs-seg-text-state { background: #6a1b9a; }
+.cs-seg-text-pos   { background: #00838f; }
+.cs-seg-text-show  { background: #2e7d32; }
+.cs-seg-gstate     { background: #1565c0; }
+.cs-seg-color      { background: #bf360c; }
+.cs-seg-path       { background: #f9a825; }
+.cs-seg-clip       { background: #b71c1c; }
+.cs-seg-xobject    { background: #ad1457; }
+.cs-seg-shading    { background: #283593; }
+.cs-seg-marked     { background: #546e7a; }
+.cs-seg-inline     { background: #37474f; }
+.cs-seg-compat     { background: #757575; }
+.cs-seg-unknown    { background: #424242; }
+
+/* Row left-border colors */
+.cs-row-text-state { border-left-color: #6a1b9a; }
+.cs-row-text-pos   { border-left-color: #00838f; }
+.cs-row-text-show  { border-left-color: #2e7d32; }
+.cs-row-gstate     { border-left-color: #1565c0; }
+.cs-row-color      { border-left-color: #bf360c; }
+.cs-row-path       { border-left-color: #f9a825; }
+.cs-row-clip       { border-left-color: #b71c1c; }
+.cs-row-xobject    { border-left-color: #ad1457; }
+.cs-row-shading    { border-left-color: #283593; }
+.cs-row-marked     { border-left-color: #546e7a; }
+.cs-row-inline     { border-left-color: #37474f; }
+.cs-row-compat     { border-left-color: #757575; }
+.cs-row-unknown    { border-left-color: #424242; }
+
+.cs-td-op      { color: var(--accent); font-weight: 700; white-space: nowrap; }
+.cs-td-desc    { color: var(--text); white-space: nowrap; }
+.cs-td-summary { color: var(--text-dim); white-space: normal; max-width: 320px; word-break: break-word; }

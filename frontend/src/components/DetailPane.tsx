@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
-import type { TreeNode, IccData, ImageDetailData } from '../api'
-import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, imageUrl } from '../api'
+import type { TreeNode, IccData, ImageDetailData, ContentStreamData } from '../api'
+import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, imageUrl } from '../api'
 import IccPane from './IccPane'
 import ImagePane from './ImagePane'
+import ContentStreamPane from './ContentStreamPane'
 
 interface Props {
   node: TreeNode | null
@@ -45,6 +46,7 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
   const [isImageResolved, setIsImageResolved] = useState(false)
   const [iccData, setIccData] = useState<IccData | null>(null)
   const [imageDetail, setImageDetail] = useState<ImageDetailData | null>(null)
+  const [contentStreamData, setContentStreamData] = useState<ContentStreamData | null>(null)
 
   useEffect(() => {
     if (!node) {
@@ -60,6 +62,7 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
     setImageError(null)
     setIccData(null)
     setImageDetail(null)
+    setContentStreamData(null)
     setError(null)
 
     // If the node already has detail text, use it directly
@@ -89,6 +92,10 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
         if (resp.is_image) {
           fetchImageDetail(uploadId, node.obj_num, node.gen_num)
             .then(d => setImageDetail(d))
+        }
+        if (resp.is_content_stream) {
+          fetchContentStream(uploadId, node.obj_num, node.gen_num)
+            .then(d => setContentStreamData(d))
         }
       })
       .catch(err => {
@@ -141,6 +148,12 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
         {!canShowImage && iccData && (
           <div className="detail-icc-section">
             <IccPane icc={iccData} />
+          </div>
+        )}
+
+        {!canShowImage && !iccData && contentStreamData && (
+          <div className="detail-cs-section">
+            <ContentStreamPane data={contentStreamData} />
           </div>
         )}
 

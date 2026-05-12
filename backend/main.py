@@ -19,10 +19,11 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from pdf.document import PdfDocument, _decode_stream, _detail
+from pdf.document import PdfDocument, _decode_stream, _detail, _is_binary
 from pdf.icc import parse_icc_profile
 from pdf.jpeg import parse_jpeg
 from pdf.ccitt import parse_ccitt
+from pdf.content_stream import parse_content_stream, is_content_stream as _is_content_stream_data
 from pdf.objects import PdfObjType
 from pdf.xref import XrefEntryType
 
@@ -169,6 +170,7 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     obj = doc.resolve_num(num, gen)
     is_image = False
     is_icc_profile = False
+    is_content_stream = False
     image_filter: str | None = None
     if obj and (obj.is_dict() or obj.type == PdfObjType.Stream):
         st = obj.get("Subtype")
@@ -182,11 +184,17 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                 decoded = flat_decode(obj.stream_raw)
                 if decoded and len(decoded) >= 40 and decoded[36:40] == b'acsp':
                     is_icc_profile = True
+                if decoded and not is_icc_profile and not is_image:
+                    type_obj = obj.get("Type")
+                    not_special = not (type_obj.is_name() and type_obj.sval in ('ObjStm', 'XRef'))
+                    if not_special and not _is_binary(decoded) and _is_content_stream_data(decoded):
+                        is_content_stream = True
 
     return {
         "detail": detail,
         "is_image": is_image,
         "is_icc_profile": is_icc_profile,
+        "is_content_stream": is_content_stream,
         "image_filter": image_filter,
         "obj_num": num,
         "gen_num": gen,
@@ -220,6 +228,37 @@ def get_icc_profile(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         raise HTTPException(422, "Not a valid ICC profile")
 
     return icc
+
+
+@app.get("/api/content_stream/{upload_id}/{num}/{gen}")
+def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Return parsed operator data for a PDF content stream."""
+    from pdf.filters import flat_decode
+
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+
+    obj = doc.resolve_num(num, gen)
+    if obj is None or obj.type != PdfObjType.Stream:
+        raise HTTPException(404, "Object not found or not a stream")
+
+    fobj = obj.get("Filter")
+    if fobj.is_name() and fobj.sval == "FlateDecode":
+        decoded = flat_decode(obj.stream_raw)
+    elif fobj.is_null():
+        decoded = obj.stream_raw
+    else:
+        raise HTTPException(422, "Unsupported filter for content stream")
+
+    if decoded is None:
+        raise HTTPException(422, "Failed to decode stream")
+
+    result = parse_content_stream(decoded)
+    if result is None:
+        raise HTTPException(422, "Not a valid content stream")
+
+    return result
 
 
 @app.get("/api/image_detail/{upload_id}/{num}/{gen}")
