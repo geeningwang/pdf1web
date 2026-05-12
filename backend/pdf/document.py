@@ -176,43 +176,56 @@ def _bytes_to_printable(data: bytes) -> str:
 
 
 _HEX_DUMP_MAX = 64 * 1024  # 64 KiB
-_ICC_SECTION_CAP = 320      # max bytes shown per ICC structure region
 
 
-def _hex_dump_section(data: bytes, start_addr: int, cap: int = _ICC_SECTION_CAP) -> str:
-    """Hex dump a byte slice with absolute addresses, capped at *cap* bytes."""
+def _hex_dump_section(data: bytes, start_addr: int, remaining: int) -> tuple[str, int]:
+    """Hex dump a byte slice with absolute addresses, limited by *remaining* bytes.
+
+    Returns (text, bytes_consumed).
+    """
     lines: list[str] = []
-    chunk = data[:cap]
+    chunk = data[:remaining]
     for i in range(0, len(chunk), 16):
         row = chunk[i:i + 16]
         hex_part = ' '.join(f'{b:02X}' for b in row)
         lines.append(f'{start_addr + i:04X}: {hex_part}')
-    if len(data) > cap:
-        lines.append(f'     … {len(data) - cap} more bytes …')
-    return '\n'.join(lines)
+    consumed = len(chunk)
+    if len(data) > consumed:
+        lines.append(f'     … {len(data) - consumed} more bytes (64K global limit reached) …')
+    return '\n'.join(lines), consumed
 
 
 def _icc_annotated_hex(data: bytes, structure: list[dict]) -> str:
-    """Generate section-annotated hex dump for an ICC profile."""
+    """Generate section-annotated hex dump for an ICC profile, capped at 64K total."""
     lines: list[str] = []
+    remaining = _HEX_DUMP_MAX
     for seg in sorted(structure, key=lambda s: s['offset']):
         off = seg['offset']
         sz = seg['size']
         end = off + sz - 1
         lines.append(f"=== {seg['label']} ===")
         lines.append(f'    0x{off:04X} – 0x{end:04X}  ({sz} bytes)')
-        lines.append(_hex_dump_section(data[off:off + sz], start_addr=off))
+        if remaining > 0:
+            section_hex, consumed = _hex_dump_section(data[off:off + sz], start_addr=off, remaining=remaining)
+            lines.append(section_hex)
+            remaining -= consumed
+        else:
+            lines.append(f'     … {sz} bytes (64K global limit reached) …')
         lines.append('')
     return '\n'.join(lines)
+
+
+def _hex_dump(data: bytes) -> str:
     truncated = len(data) > _HEX_DUMP_MAX
     chunk = data[:_HEX_DUMP_MAX]
     lines: list[str] = []
     for i in range(0, len(chunk), 16):
-        row = chunk[i:i+16]
-        hex_part = " ".join(f"{b:02X}" for b in row)
-        lines.append(f"{i:04X}: {hex_part}")
+        row = chunk[i:i + 16]
+        hex_part = ' '.join(f'{b:02X}' for b in row)
+        lines.append(f'{i:04X}: {hex_part}')
     if truncated:
-        lines.append(f"... (truncated, only first 64K of {len(data)} bytes shown)")
+        lines.append(f'... (truncated, only first 64K of {len(data)} bytes shown)')
+    return '\n'.join(lines)
     return "\n".join(lines)
 
 
