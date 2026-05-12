@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+*.egg-info/
+
+# Node
+frontend/node_modules/
+
+# Build output (keep dist/ — it's served directly by FastAPI)
