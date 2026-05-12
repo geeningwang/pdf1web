@@ -240,15 +240,8 @@ def _icc_annotated_hex(data: bytes, structure: list[dict]) -> str:
     return '\n'.join(lines)
 
 
-_JPEG_SCAN_PREVIEW = 64  # bytes of compressed scan data to show in annotated hex
-
-
 def _jpeg_annotated_hex(data: bytes, structure: list[dict]) -> str:
-    """Generate section-annotated hex dump for a JPEG stream, capped at 64K total.
-
-    Entropy-coded scan data is capped at _JPEG_SCAN_PREVIEW bytes because it
-    is incomprehensible as a hex dump regardless of length.
-    """
+    """Generate section-annotated hex dump for a JPEG stream, capped at 64K total."""
     lines: list[str] = []
     remaining = _HEX_DUMP_MAX
     for seg in structure:  # already in stream order from parse_jpeg
@@ -258,23 +251,11 @@ def _jpeg_annotated_hex(data: bytes, structure: list[dict]) -> str:
         lines.append(f"=== {seg['label']} ===")
         lines.append(f'    0x{off:04X} – 0x{end:04X}  ({sz} bytes)')
         if remaining > 0:
-            # Cap scan data at a small preview; everything else up to the global budget
-            if seg.get('is_scan'):
-                cap = _JPEG_SCAN_PREVIEW
-                # Pass only the preview slice so _hex_dump_section won't append its own truncation note
-                section_hex, consumed = _hex_dump_section(
-                    data[off:off + cap], start_addr=off, remaining=cap
-                )
-                lines.append(section_hex)
-                remaining -= consumed
-                if sz > cap:
-                    lines.append(f'     … {sz - cap} more bytes (entropy-coded; not shown) …')
-            else:
-                section_hex, consumed = _hex_dump_section(
-                    data[off:off + sz], start_addr=off, remaining=remaining
-                )
-                lines.append(section_hex)
-                remaining -= consumed
+            section_hex, consumed = _hex_dump_section(
+                data[off:off + sz], start_addr=off, remaining=remaining
+            )
+            lines.append(section_hex)
+            remaining -= consumed
         else:
             lines.append(f'     … {sz} bytes (64K global limit reached) …')
         lines.append('')
