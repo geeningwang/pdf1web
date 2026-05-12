@@ -79,6 +79,15 @@ def _brief(obj: PdfObject) -> str:
     return ""
 
 
+def _check_indexed_arr(arr: list[PdfObject], result: set[int]) -> None:
+    """If *arr* is [/Indexed, base_cs, hival, lookup_ref], add lookup_ref.num to result."""
+    if (len(arr) >= 4
+            and arr[0].type == PdfObjType.Name
+            and arr[0].sval == "Indexed"
+            and arr[3].type == PdfObjType.Reference):
+        result.add(arr[3].ref.num)
+
+
 def _detail(obj: PdfObject, indent: int = 0) -> str:
     pad = "  " * indent
     t = obj.type
@@ -390,6 +399,7 @@ class PdfDocument:
         self._file_path: str = ""
         self._object_cache: dict[int, PdfObject] = {}
         self._root: PdfNode | None = None
+        self._palette_nums: frozenset[int] = frozenset()
 
     # ------------------------------------------------------------------
     @classmethod
@@ -398,6 +408,7 @@ class PdfDocument:
         doc._file_path = filename
         doc._reader = PdfReader(data)
         doc._parse_document()
+        doc._palette_nums = doc._collect_palette_nums()
         doc._root = doc._build_tree()
         return doc
 
@@ -411,7 +422,31 @@ class PdfDocument:
     def file_path(self) -> str:
         return self._file_path
 
-    def get_object_detail(self, num: int, gen: int = 0) -> str:
+    def is_palette_lookup(self, num: int) -> bool:
+        """Return True if obj *num* is referenced as an Indexed CS palette lookup."""
+        return num in self._palette_nums
+
+    def _collect_palette_nums(self) -> frozenset[int]:
+        """Scan all objects for Indexed color space arrays and collect lookup stream nums."""
+        result: set[int] = set()
+        for num in self._xref.entries:
+            obj = self.resolve_num(num)
+            if obj is None:
+                continue
+            # Top-level array object: [/Indexed base hival lookup]
+            if obj.type == PdfObjType.Array:
+                _check_indexed_arr(obj.arr, result)
+            # Dict/stream: scan all values for inline or referenced arrays
+            if obj.is_dict():
+                for v in obj.dict.values():
+                    if v.type == PdfObjType.Array:
+                        _check_indexed_arr(v.arr, result)
+                    elif v.is_ref():
+                        # Resolve one level — ColorSpace is often an indirect ref to an array
+                        target = self.resolve_num(v.ref.num, v.ref.gen)
+                        if target is not None and target.type == PdfObjType.Array:
+                            _check_indexed_arr(target.arr, result)
+        return frozenset(result)
         obj = self.resolve_num(num, gen)
         if obj is None:
             return f"(object {num} {gen} R could not be resolved)"

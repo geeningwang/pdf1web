@@ -191,11 +191,10 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                     not_special = not (type_obj.is_name() and type_obj.sval in ('ObjStm', 'XRef'))
                     if not_special and not _is_binary(decoded) and _is_content_stream_data(decoded):
                         is_content_stream = True
-            # Detect indexed color palette: stream with only Length, small and divisible by 3
+            # Detect indexed color palette: check if this object is referenced as
+            # an Indexed CS lookup stream elsewhere in the document (reliable).
             if not is_image and not is_icc_profile and not is_content_stream:
-                keys = set(obj.dict.keys())
-                stripped = obj.stream_raw.rstrip(b'\x00\x09\x0a\x0c\x0d\x20')
-                if (keys <= {"Length"} and 0 < len(stripped) <= 768 and len(stripped) % 3 == 0):
+                if obj.type == PdfObjType.Stream and doc.is_palette_lookup(num):
                     is_palette = True
 
     return {
