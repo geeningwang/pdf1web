@@ -261,17 +261,36 @@ html, body, #root {
   color: var(--text);
 }
 
-.btn-image-toggle {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 3px;
-  padding: 2px 8px;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
+/* Body below the header: vertical stack of image section + text section */
+.detail-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.btn-image-toggle:hover { background: var(--border); }
+
+/* Image section — shown only for image nodes, takes up to 45% of body */
+.detail-image-section {
+  flex: 0 0 auto;
+  max-height: 45%;
+  min-height: 80px;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Text section — always shown, takes remaining space */
+.detail-text-section {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 
 .detail-loading,
 .detail-error {
@@ -291,16 +310,6 @@ html, body, #root {
   color: var(--text);
   background: var(--bg);
   margin: 0;
-}
-
-.detail-image-wrap {
-  flex: 1;
-  overflow: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: var(--bg3);
 }
 
 .detail-image {

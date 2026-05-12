@@ -4,10 +4,12 @@ FastAPI backend for pdf1web — PDF Structure Analyzer Web App.
 from __future__ import annotations
 
 import io
+import logging
 import os
 import struct
 import uuid
 import zlib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +17,11 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 
-from pdf.document import PdfDocument, _decode_stream
+from pdf.document import PdfDocument, _decode_stream, _detail
 from pdf.objects import PdfObjType
+from pdf.xref import XrefEntryType
 
 app = FastAPI(title="pdf1web API")
 
@@ -32,6 +36,10 @@ app.add_middleware(
 _sessions: dict[str, PdfDocument] = {}
 _MAX_SESSIONS = 20  # evict oldest if exceeded
 
+# Directory where uploaded PDFs and their analysis logs are persisted
+_UPLOADS_DIR = Path(__file__).parent / "uploads"
+_UPLOADS_DIR.mkdir(exist_ok=True)
+
 # Serve built frontend static files if the dist folder exists
 _DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
@@ -44,6 +52,70 @@ def _evict_if_needed() -> None:
     if len(_sessions) >= _MAX_SESSIONS:
         oldest = next(iter(_sessions))
         del _sessions[oldest]
+
+
+def _save_upload(upload_id: str, filename: str, data: bytes, doc: PdfDocument) -> None:
+    """Persist the raw PDF and an analysis log under uploads/<upload_id>/."""
+    upload_dir = _UPLOADS_DIR / upload_id
+    upload_dir.mkdir(exist_ok=True)
+
+    # Save raw PDF bytes
+    (upload_dir / filename).write_bytes(data)
+
+    # Build analysis log
+    lines: list[str] = []
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    lines.append(f"=== pdf1web analysis log ===")
+    lines.append(f"timestamp : {ts}")
+    lines.append(f"upload_id : {upload_id}")
+    lines.append(f"filename  : {filename}")
+    lines.append(f"file_size : {len(data)} bytes")
+    lines.append(f"pdf_version: {doc.version()}")
+    lines.append("")
+
+    # XRef summary
+    entries = doc._xref.entries
+    in_use = sum(1 for e in entries.values() if e.etype == XrefEntryType.InUse)
+    free = sum(1 for e in entries.values() if e.etype == XrefEntryType.Free)
+    compressed = sum(1 for e in entries.values() if e.etype == XrefEntryType.Compressed)
+    lines.append("--- xref table ---")
+    lines.append(f"total entries : {len(entries)}")
+    lines.append(f"in-use        : {in_use}")
+    lines.append(f"free          : {free}")
+    lines.append(f"compressed    : {compressed}")
+    lines.append("")
+
+    # Trailer dictionary
+    lines.append("--- trailer ---")
+    lines.append(_detail(doc._trailer))
+    lines.append("")
+
+    # Object-by-object summary
+    lines.append("--- objects ---")
+    for obj_num in sorted(entries):
+        xe = entries[obj_num]
+        obj = doc.resolve_num(obj_num, xe.gen)
+        if obj is None:
+            lines.append(f"obj {obj_num} {xe.gen} R  [could not resolve]")
+            continue
+        type_name = obj.type.name
+        extra = ""
+        if obj.is_dict() or obj.type == PdfObjType.Stream:
+            subtype = obj.get("Subtype")
+            type_key = obj.get("Type")
+            parts = []
+            if type_key.is_name():
+                parts.append(f"Type=/{type_key.sval}")
+            if subtype.is_name():
+                parts.append(f"Subtype=/{subtype.sval}")
+            if parts:
+                extra = "  " + ", ".join(parts)
+        if obj.type == PdfObjType.Stream:
+            extra += f"  raw={len(obj.stream_raw)}B"
+        lines.append(f"obj {obj_num} {xe.gen} R  {type_name}{extra}")
+    lines.append("")
+
+    (upload_dir / "analysis.log").write_text("\n".join(lines), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +140,11 @@ async def upload_pdf(file: UploadFile = File(...)) -> dict[str, Any]:
     upload_id = _make_id()
     _evict_if_needed()
     _sessions[upload_id] = doc
+
+    try:
+        _save_upload(upload_id, file.filename, data, doc)
+    except Exception as exc:
+        logging.warning("Could not persist upload %s: %s", upload_id, exc)
 
     root = doc.root()
     return {
@@ -118,6 +195,13 @@ def get_image(upload_id: str, num: int, gen: int) -> Response:
     if filter_name == "DCTDecode":
         return Response(content=obj.stream_raw, media_type="image/jpeg")
 
+    # CCITTFaxDecode → decode via PIL TIFF wrapper (Group 3 / Group 4)
+    if filter_name == "CCITTFaxDecode":
+        png_data = _ccitt_fax_to_png(obj)
+        if png_data is None:
+            raise HTTPException(422, "Cannot decode CCITTFax image stream")
+        return Response(content=png_data, media_type="image/png")
+
     # Try to decode and serve as PNG
     decoded = obj.stream_decoded if obj.stream_decoded else _decode_stream(obj)
     if decoded is not None and not obj.stream_decoded:
@@ -144,12 +228,100 @@ def get_image(upload_id: str, num: int, gen: int) -> Response:
 
     channels = 3 if cs in ("DeviceRGB", "RGB") else 1  # grayscale default
 
+    # Expand packed 1-bit data to 8-bit so _raw_to_png can handle it
+    if bpc == 1:
+        decoded = _expand_1bit(decoded, width, height, channels)
+        bpc = 8
+
     try:
         png_data = _raw_to_png(decoded, width, height, channels, bpc)
     except Exception as exc:
         raise HTTPException(422, f"Cannot convert to PNG: {exc}") from exc
 
     return Response(content=png_data, media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# CCITTFax decoder (Group 3 / Group 4) via PIL TIFF wrapper
+# ---------------------------------------------------------------------------
+
+def _ccitt_fax_to_png(obj: Any) -> bytes | None:
+    """Decode a CCITTFaxDecode image stream and return PNG bytes.
+
+    Builds a minimal TIFF container around the raw fax data so PIL/libtiff
+    can decompress it, then encodes the result as a grayscale PNG.
+    """
+    w_obj = obj.get("Width")
+    h_obj = obj.get("Height")
+    if not w_obj.is_int() or not h_obj.is_int():
+        return None
+
+    width = int(w_obj.ival)
+    height = int(h_obj.ival)
+
+    # K=-1 → CCITT Group 4 (T.6); K=0 → Group 3 1D; K>0 → Group 3 2D
+    k = -1
+    dp = obj.get("DecodeParms")
+    if dp.is_dict():
+        k_obj = dp.get("K")
+        if k_obj.is_int():
+            k = int(k_obj.ival)
+
+    # TIFF compression: 4 = Group 4, 3 = Group 3
+    tiff_compression = 4 if k < 0 else 3
+
+    SHORT, LONG = 3, 4
+    num_tags = 10
+    ifd_offset = 8
+    data_offset = ifd_offset + 2 + num_tags * 12 + 4
+
+    header = struct.pack("<2sHI", b"II", 42, ifd_offset)
+    tags = [
+        (256, SHORT, 1, width),
+        (257, SHORT, 1, height),
+        (258, SHORT, 1, 1),                   # BitsPerSample = 1
+        (259, SHORT, 1, tiff_compression),    # Compression
+        (262, SHORT, 1, 0),                   # PhotometricInterpretation: WhiteIsZero
+        (273, LONG,  1, data_offset),         # StripOffsets
+        (278, LONG,  1, height),              # RowsPerStrip
+        (279, LONG,  1, len(obj.stream_raw)), # StripByteCounts
+        (280, SHORT, 1, 0),
+        (281, SHORT, 1, 1),
+    ]
+    ifd = struct.pack("<H", num_tags)
+    for tid, tt, cnt, val in tags:
+        ifd += struct.pack("<HHII", tid, tt, cnt, val)
+    ifd += struct.pack("<I", 0)
+
+    tiff_bytes = header + ifd + obj.stream_raw
+
+    try:
+        img = Image.open(io.BytesIO(tiff_bytes))
+        # CCITT G4 data in PDF is encoded bottom-row-first (PDF image origin is
+        # lower-left).  PDF viewers compensate with a negative-d CTM; we must
+        # apply the same vertical flip here so the image appears right-side up.
+        img = img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        raw_pixels = img.convert("L").tobytes()
+    except Exception:
+        return None
+
+    return _raw_to_png(raw_pixels, width, height, 1, 8)
+
+
+def _expand_1bit(data: bytes, width: int, height: int, channels: int = 1) -> bytes:
+    """Expand packed 1-bit image data to 8-bit per channel (0 or 255)."""
+    stride = (width * channels + 7) // 8
+    result = bytearray()
+    for row in range(height):
+        row_data = data[row * stride: (row + 1) * stride]
+        bits_written = 0
+        for byte in row_data:
+            for bit_idx in range(7, -1, -1):
+                if bits_written >= width * channels:
+                    break
+                result.append(0 if (byte >> bit_idx) & 1 else 255)
+                bits_written += 1
+    return bytes(result)
 
 
 # ---------------------------------------------------------------------------

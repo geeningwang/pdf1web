@@ -11,8 +11,7 @@ const DetailPane: React.FC<Props> = ({ node, uploadId }) => {
   const [detail, setDetail] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // true = showing image, false = showing text detail
-  const [showImage, setShowImage] = useState(false)
+  const [imageError, setImageError] = useState<string | null>(null)
   // is_image can be updated after a lazy fetch (e.g. XRef Table entries)
   const [isImageResolved, setIsImageResolved] = useState(false)
 
@@ -20,16 +19,14 @@ const DetailPane: React.FC<Props> = ({ node, uploadId }) => {
     if (!node) {
       setDetail('')
       setError(null)
-      setShowImage(false)
+      setImageError(null)
       setIsImageResolved(false)
       return
     }
 
     const isImageNode = node.is_image && node.obj_num >= 0 && uploadId !== null
     setIsImageResolved(isImageNode)
-
-    // Auto-switch to image view when an image node is selected (mirrors Win32 behaviour)
-    setShowImage(isImageNode)
+    setImageError(null)
     setError(null)
 
     // If the node already has detail text, use it directly
@@ -53,7 +50,6 @@ const DetailPane: React.FC<Props> = ({ node, uploadId }) => {
         // tree-build time doesn't know the object type yet)
         if (resp.is_image && !isImageNode) {
           setIsImageResolved(true)
-          setShowImage(true)
         }
       })
       .catch(err => {
@@ -76,38 +72,33 @@ const DetailPane: React.FC<Props> = ({ node, uploadId }) => {
     <div className="detail-pane">
       <div className="detail-header">
         <span className="detail-node-label">{node.label}</span>
-        {canShowImage && (
-          <button
-            className="btn-image-toggle"
-            onClick={() => setShowImage(v => !v)}
-          >
-            {showImage ? '📄 Show Detail' : '🖼 View Image'}
-          </button>
-        )}
       </div>
 
-      {loading && !showImage && <div className="detail-loading">Loading…</div>}
-      {error && <div className="detail-error">{error}</div>}
+      <div className="detail-body">
+        {canShowImage && (
+          <div className="detail-image-section">
+            {imageError
+              ? <div className="detail-error">{imageError}</div>
+              : (
+                <img
+                  src={imageUrl(uploadId!, node.obj_num, node.gen_num)}
+                  alt="XObject image"
+                  className="detail-image"
+                  onError={() =>
+                    setImageError('Image could not be rendered (unsupported pixel format or filter)')
+                  }
+                />
+              )
+            }
+          </div>
+        )}
 
-      {!error && (
-        <>
-          {showImage && canShowImage ? (
-            <div className="detail-image-wrap">
-              <img
-                src={imageUrl(uploadId!, node.obj_num, node.gen_num)}
-                alt="XObject image"
-                className="detail-image"
-                onError={() => {
-                  setError('Image could not be rendered (unsupported pixel format or filter)')
-                  setShowImage(false)
-                }}
-              />
-            </div>
-          ) : (
-            !loading && <pre className="detail-text">{detail}</pre>
-          )}
-        </>
-      )}
+        <div className="detail-text-section">
+          {loading && <div className="detail-loading">Loading…</div>}
+          {error && <div className="detail-error">{error}</div>}
+          {!loading && !error && <pre className="detail-text">{detail}</pre>}
+        </div>
+      </div>
     </div>
   )
 }

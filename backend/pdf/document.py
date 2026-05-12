@@ -119,9 +119,11 @@ def _detail(obj: PdfObject, indent: int = 0) -> str:
                 text = _bytes_to_printable(obj.stream_decoded[:show])
                 lines.append(text)
             else:
-                show = min(len(obj.stream_raw), 512)
-                lines.append(f"--- raw hex (first {show} bytes) ---")
-                lines.append(_hex_dump(obj.stream_raw[:show]))
+                total = len(obj.stream_raw)
+                capped = total > _HEX_DUMP_MAX
+                label = f"--- raw hex ({total} bytes" + (", first 64K shown" if capped else "") + ") ---"
+                lines.append(label)
+                lines.append(_hex_dump(obj.stream_raw))
             lines.append("endstream")
         return "\n".join(lines)
     return pad + "?"
@@ -141,12 +143,19 @@ def _bytes_to_printable(data: bytes) -> str:
     return "".join(out)
 
 
+_HEX_DUMP_MAX = 64 * 1024  # 64 KiB
+
+
 def _hex_dump(data: bytes) -> str:
+    truncated = len(data) > _HEX_DUMP_MAX
+    chunk = data[:_HEX_DUMP_MAX]
     lines: list[str] = []
-    for i in range(0, len(data), 16):
-        row = data[i:i+16]
+    for i in range(0, len(chunk), 16):
+        row = chunk[i:i+16]
         hex_part = " ".join(f"{b:02X}" for b in row)
-        lines.append(hex_part)
+        lines.append(f"{i:04X}: {hex_part}")
+    if truncated:
+        lines.append(f"... (truncated, only first 64K of {len(data)} bytes shown)")
     return "\n".join(lines)
 
 
