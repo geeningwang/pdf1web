@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import type { TreeNode } from '../api'
-import { fetchObjectDetail, imageUrl } from '../api'
+import type { TreeNode, IccData } from '../api'
+import { fetchObjectDetail, fetchIccProfile, imageUrl } from '../api'
+import IccPane from './IccPane'
 
 interface Props {
   node: TreeNode | null
@@ -40,8 +41,8 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [imageError, setImageError] = useState<string | null>(null)
-  // is_image can be updated after a lazy fetch (e.g. XRef Table entries)
   const [isImageResolved, setIsImageResolved] = useState(false)
+  const [iccData, setIccData] = useState<IccData | null>(null)
 
   useEffect(() => {
     if (!node) {
@@ -55,6 +56,7 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
     const isImageNode = node.is_image && node.obj_num >= 0 && uploadId !== null
     setIsImageResolved(isImageNode)
     setImageError(null)
+    setIccData(null)
     setError(null)
 
     // If the node already has detail text, use it directly
@@ -74,10 +76,12 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
       .then(resp => {
         setDetail(resp.detail)
         setLoading(false)
-        // Update is_image from server response (e.g. XRef Table entries where
-        // tree-build time doesn't know the object type yet)
         if (resp.is_image && !isImageNode) {
           setIsImageResolved(true)
+        }
+        if (resp.is_icc_profile) {
+          fetchIccProfile(uploadId, node.obj_num, node.gen_num)
+            .then(icc => setIccData(icc))
         }
       })
       .catch(err => {
@@ -118,6 +122,12 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
                 />
               )
             }
+          </div>
+        )}
+
+        {!canShowImage && iccData && (
+          <div className="detail-icc-section">
+            <IccPane icc={iccData} />
           </div>
         )}
 

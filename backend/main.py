@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from pdf.document import PdfDocument, _decode_stream, _detail
+from pdf.icc import parse_icc_profile
 from pdf.objects import PdfObjType
 from pdf.xref import XrefEntryType
 
@@ -165,11 +166,54 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     detail = doc.get_object_detail(num, gen)
     obj = doc.resolve_num(num, gen)
     is_image = False
-    if obj and obj.is_dict():
+    is_icc_profile = False
+    if obj and (obj.is_dict() or obj.type == PdfObjType.Stream):
         st = obj.get("Subtype")
         is_image = st.is_name() and st.sval == "Image"
+        if obj.type == PdfObjType.Stream:
+            from pdf.filters import flat_decode
+            fobj = obj.get("Filter")
+            if fobj.is_name() and fobj.sval == "FlateDecode":
+                decoded = flat_decode(obj.stream_raw)
+                if decoded and len(decoded) >= 40 and decoded[36:40] == b'acsp':
+                    is_icc_profile = True
 
-    return {"detail": detail, "is_image": is_image, "obj_num": num, "gen_num": gen}
+    return {
+        "detail": detail,
+        "is_image": is_image,
+        "is_icc_profile": is_icc_profile,
+        "obj_num": num,
+        "gen_num": gen,
+    }
+
+
+@app.get("/api/icc/{upload_id}/{num}/{gen}")
+def get_icc_profile(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Return parsed ICC profile data for a FlateDecode stream object."""
+    from pdf.filters import flat_decode
+
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+
+    obj = doc.resolve_num(num, gen)
+    if obj is None or obj.type != PdfObjType.Stream:
+        raise HTTPException(404, "Object not found or not a stream")
+
+    fobj = obj.get("Filter")
+    if fobj.is_name() and fobj.sval == "FlateDecode":
+        decoded = flat_decode(obj.stream_raw)
+    else:
+        decoded = obj.stream_raw
+
+    if decoded is None:
+        raise HTTPException(422, "Could not decode stream")
+
+    icc = parse_icc_profile(decoded)
+    if icc is None:
+        raise HTTPException(422, "Not a valid ICC profile")
+
+    return icc
 
 
 @app.get("/api/image/{upload_id}/{num}/{gen}")

@@ -283,6 +283,15 @@ html, body, #root {
   border-bottom: 1px solid var(--border);
 }
 
+/* ICC profile section — same slot as image section */
+.detail-icc-section {
+  flex: 0 0 auto;
+  max-height: 55%;
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+}
+
 /* Text section — always shown, takes remaining space */
 .detail-text-section {
   flex: 1;
@@ -328,6 +337,91 @@ html, body, #root {
   object-fit: contain;
   image-rendering: pixelated;
   border: 1px solid var(--border);
+}
+
+/* -----------------------------------------------------------------------
+   ICC Profile Pane
+   ----------------------------------------------------------------------- */
+.icc-pane {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.icc-header {
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+.icc-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.icc-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.icc-section-label {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 10px 0 5px;
+}
+
+.icc-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.icc-swatch-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.icc-swatch {
+  width: 30px;
+  height: 24px;
+  border-radius: 3px;
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.icc-swatch-label {
+  font-size: 9px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.icc-xyz-table {
+  margin: 6px 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.icc-xyz-row {
+  display: flex;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.icc-xyz-ch {
+  color: var(--accent);
+  width: 12px;
+}
+
+.icc-trc-canvas {
+  display: block;
+  border-radius: 4px;
+  border: 1px solid #2a2a4a;
+  max-width: 100%;
+}
+
+.icc-info {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
 }
 
 /* -----------------------------------------------------------------------

@@ -21,8 +21,29 @@ export interface UploadResponse {
 export interface ObjectDetailResponse {
   detail: string
   is_image: boolean
+  is_icc_profile: boolean
   obj_num: number
   gen_num: number
+}
+
+export interface IccData {
+  description: string | null
+  color_space: string
+  pcs: string
+  white_point: [number, number, number] | null
+  primaries: {
+    r_xyz: [number, number, number] | null
+    g_xyz: [number, number, number] | null
+    b_xyz: [number, number, number] | null
+    r_display: [number, number, number] | null
+    g_display: [number, number, number] | null
+    b_display: [number, number, number] | null
+  }
+  trc: {
+    r: number[] | null
+    g: number[] | null
+    b: number[] | null
+  }
 }
 
 /* -----------------------------------------------------------------------
@@ -57,4 +78,14 @@ export async function fetchObjectDetail(
 
 export function imageUrl(uploadId: string, num: number, gen: number): string {
   return `${BASE}/image/${uploadId}/${num}/${gen}`
+}
+
+export async function fetchIccProfile(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<IccData | null> {
+  const res = await fetch(`${BASE}/icc/${uploadId}/${num}/${gen}`)
+  if (!res.ok) return null
+  return res.json()
 }
