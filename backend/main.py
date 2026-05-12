@@ -22,6 +22,7 @@ from PIL import Image
 from pdf.document import PdfDocument, _decode_stream, _detail
 from pdf.icc import parse_icc_profile
 from pdf.jpeg import parse_jpeg
+from pdf.ccitt import parse_ccitt
 from pdf.objects import PdfObjType
 from pdf.xref import XrefEntryType
 
@@ -272,6 +273,54 @@ def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                 "frame_info": fi,
             }
 
+    ccitt_data: dict | None = None
+
+    if filter_name == "CCITTFaxDecode":
+        dp = obj.get("DecodeParms")
+        k = -1
+        columns = width or 1728
+        rows_param: int | None = None
+        end_of_block = True
+        end_of_line = False
+        encoded_byte_align = False
+        black_is_1 = False
+        damaged_rows = 0
+        if dp.is_dict():
+            k_obj = dp.get("K")
+            if k_obj.is_int():
+                k = int(k_obj.ival)
+            col_obj = dp.get("Columns")
+            if col_obj.is_int():
+                columns = int(col_obj.ival)
+            rows_obj = dp.get("Rows")
+            if rows_obj.is_int():
+                rows_param = int(rows_obj.ival)
+            eob_obj = dp.get("EndOfBlock")
+            if eob_obj.type == PdfObjType.Boolean:
+                end_of_block = eob_obj.bval
+            eol_obj = dp.get("EndOfLine")
+            if eol_obj.type == PdfObjType.Boolean:
+                end_of_line = eol_obj.bval
+            eba_obj = dp.get("EncodedByteAlign")
+            if eba_obj.type == PdfObjType.Boolean:
+                encoded_byte_align = eba_obj.bval
+            bi1_obj = dp.get("BlackIs1")
+            if bi1_obj.type == PdfObjType.Boolean:
+                black_is_1 = bi1_obj.bval
+            drbe_obj = dp.get("DamagedRowsBeforeError")
+            if drbe_obj.is_int():
+                damaged_rows = int(drbe_obj.ival)
+        if height is not None:
+            import math
+            decoded_size = math.ceil(columns * height / 8)
+        ccitt_data = parse_ccitt(
+            obj.stream_raw,
+            k=k, columns=columns, rows=rows_param,
+            end_of_block=end_of_block, end_of_line=end_of_line,
+            encoded_byte_align=encoded_byte_align, black_is_1=black_is_1,
+            damaged_rows_before_error=damaged_rows,
+        )
+
     return {
         "width": width,
         "height": height,
@@ -281,6 +330,7 @@ def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "raw_size": raw_size,
         "decoded_size": decoded_size,
         "jpeg": jpeg_data,
+        "ccitt": ccitt_data,
     }
 
 

@@ -1,5 +1,5 @@
 import React from 'react'
-import type { ImageDetailData, JpegStructureSegment } from '../api'
+import type { ImageDetailData, JpegStructureSegment, CcittStructureSegment } from '../api'
 
 // ------------------------------------------------------------------ helpers
 
@@ -48,6 +48,38 @@ function JpegStructBar({ segs, total }: { segs: JpegStructureSegment[]; total: n
           </span>
         ))}
         <span className="img-legend-item img-legend-total">{total.toLocaleString()} B total</span>
+      </div>
+    </div>
+  )
+}
+
+// ------------------------------------------------------------------ CCITT structure bar
+
+const CCITT_LEGEND = [
+  { color: 'ccitt', label: 'Compressed fax data' },
+]
+
+function CcittStructBar({ segs, total }: { segs: CcittStructureSegment[]; total: number }) {
+  return (
+    <div>
+      <div className="img-struct-bar">
+        {segs.map((s, i) => (
+          <div
+            key={i}
+            className={`img-struct-seg img-seg-${s.color}`}
+            style={{ flex: Math.max(s.size, 2) }}
+            title={`${s.label}\n(${s.size} B)`}
+          />
+        ))}
+      </div>
+      <div className="img-struct-legend">
+        {CCITT_LEGEND.map(l => (
+          <span key={l.color} className="img-legend-item">
+            <span className={`img-legend-dot img-seg-${l.color}`} />
+            {l.label}
+          </span>
+        ))}
+        <span className="img-legend-item img-legend-total">{total.toLocaleString()} B compressed</span>
       </div>
     </div>
   )
@@ -105,6 +137,11 @@ const ImagePane: React.FC<Props> = ({ data }) => {
         <JpegStructBar segs={jpeg.structure} total={data.raw_size} />
       )}
 
+      {/* CCITT structure bar */}
+      {data.ccitt && data.ccitt.structure.length > 0 && (
+        <CcittStructBar segs={data.ccitt.structure} total={data.ccitt.raw_size} />
+      )}
+
       {/* Metadata table */}
       <div className="img-section-label">Properties</div>
       <div className="img-meta-table">
@@ -141,6 +178,36 @@ const ImagePane: React.FC<Props> = ({ data }) => {
                     <td className="img-td-summary">
                       {s.summary ? `${s.desc} — ${s.summary}` : s.desc}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {/* CCITT parameter table */}
+      {data.ccitt && (
+        <>
+          <div className="img-section-label">
+            CCITTFaxDecode Parameters
+            <span className="img-ccitt-standard"> · {data.ccitt.compression_name} ({data.ccitt.standard})</span>
+          </div>
+          <div className="img-segs-wrap">
+            <table className="img-segs-table">
+              <thead>
+                <tr>
+                  <th>DecodeParm</th>
+                  <th>Value</th>
+                  <th>Meaning</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.ccitt.params.map((p, i) => (
+                  <tr key={i} className="img-segs-row img-seg-row-ccitt">
+                    <td className="img-td-name">{p.key}</td>
+                    <td className="img-td-addr">{p.value}</td>
+                    <td className="img-td-summary">{p.meaning}</td>
                   </tr>
                 ))}
               </tbody>

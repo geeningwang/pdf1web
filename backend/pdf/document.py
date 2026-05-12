@@ -8,6 +8,7 @@ import io
 from dataclasses import dataclass, field
 from typing import Any
 
+from .ccitt import parse_ccitt
 from .filters import flat_decode, ascii_hex_decode, ascii85_decode, dct_decode
 from .icc import parse_icc_profile
 from .jpeg import parse_jpeg
@@ -113,7 +114,7 @@ def _detail(obj: PdfObject, indent: int = 0) -> str:
             lines.append("stream")
             lines.append(f"[{len(obj.stream_raw)} bytes raw]")
 
-            # --- JPEG (DCTDecode) streams: annotate the raw JPEG bytes ---
+            # --- Detect filter for annotated display ---
             _f = obj.get("Filter")
             _filter_name = _f.sval if _f.is_name() else ''
             _is_jpeg = (
@@ -121,6 +122,7 @@ def _detail(obj: PdfObject, indent: int = 0) -> str:
                 and len(obj.stream_raw) >= 4
                 and obj.stream_raw[:2] == b'\xFF\xD8'
             )
+            _is_ccitt = _filter_name == 'CCITTFaxDecode'
 
             if _is_jpeg:
                 jpeg_info = parse_jpeg(obj.stream_raw)
@@ -135,6 +137,63 @@ def _detail(obj: PdfObject, indent: int = 0) -> str:
                 if obj.stream_decoded:
                     decoded = obj.stream_decoded
                     lines.append(f'[{len(decoded)} bytes decoded — raw pixel bytes]')
+
+            elif _is_ccitt:
+                dp = obj.get('DecodeParms')
+                k = -1
+                columns = 1728
+                rows_param: int | None = None
+                end_of_block = True
+                end_of_line = False
+                encoded_byte_align = False
+                black_is_1 = False
+                damaged_rows = 0
+                if dp.is_dict():
+                    k_obj = dp.get('K')
+                    if k_obj.is_int():
+                        k = int(k_obj.ival)
+                    col_obj = dp.get('Columns')
+                    if col_obj.is_int():
+                        columns = int(col_obj.ival)
+                    rows_obj = dp.get('Rows')
+                    if rows_obj.is_int():
+                        rows_param = int(rows_obj.ival)
+                    eob_obj = dp.get('EndOfBlock')
+                    if eob_obj.type == PdfObjType.Boolean:
+                        end_of_block = eob_obj.bval
+                    eol_obj = dp.get('EndOfLine')
+                    if eol_obj.type == PdfObjType.Boolean:
+                        end_of_line = eol_obj.bval
+                    eba_obj = dp.get('EncodedByteAlign')
+                    if eba_obj.type == PdfObjType.Boolean:
+                        encoded_byte_align = eba_obj.bval
+                    bi1_obj = dp.get('BlackIs1')
+                    if bi1_obj.type == PdfObjType.Boolean:
+                        black_is_1 = bi1_obj.bval
+                    drbe_obj = dp.get('DamagedRowsBeforeError')
+                    if drbe_obj.is_int():
+                        damaged_rows = int(drbe_obj.ival)
+                if k < 0:
+                    scheme = 'CCITT Group 4 / T.6'
+                elif k == 0:
+                    scheme = 'CCITT Group 3 1D / T.4'
+                else:
+                    scheme = f'CCITT Group 3 2D / T.4 (K={k})'
+                raw_sz = len(obj.stream_raw)
+                lines.append(f'--- CCITTFaxDecode  —  {scheme} ---')
+                lines.append(f'  K                     {k:>5}   → {scheme}')
+                lines.append(f'  Columns               {columns:>5}   pixels per scan line')
+                if rows_param is not None:
+                    lines.append(f'  Rows (DecodeParms)    {rows_param:>5}   scan lines')
+                lines.append(f'  EndOfBlock            {"true" if end_of_block else "false"}   ({"EOFB/RTC terminates stream" if end_of_block else "no end-of-block code"})')
+                lines.append(f'  EndOfLine             {"true" if end_of_line else "false"}   ({"EOL codes between lines" if end_of_line else "no EOL between lines"})')
+                lines.append(f'  EncodedByteAlign      {"true" if encoded_byte_align else "false"}   ({"lines byte-aligned" if encoded_byte_align else "packed bits, no byte alignment"})')
+                lines.append(f'  BlackIs1              {"true" if black_is_1 else "false"}   ({"1 = black" if black_is_1 else "0 = black, 1 = white (default)"})')
+                if damaged_rows:
+                    lines.append(f'  DamagedRowsBeforeError {damaged_rows}')
+                capped = raw_sz > _HEX_DUMP_MAX
+                lines.append(f'--- raw compressed hex ({raw_sz} bytes' + (', first 64K shown' if capped else '') + ') ---')
+                lines.append(_hex_dump(obj.stream_raw))
 
             elif obj.stream_decoded:
                 decoded = obj.stream_decoded

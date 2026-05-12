@@ -608,6 +608,7 @@ html, body, #root {
 .img-seg-sos     { background: #f9a825; }
 .img-seg-scan    { background: #37474f; }
 .img-seg-misc    { background: #78909c; }
+.img-seg-ccitt   { background: #1565c0; }
 
 /* Legend */
 .img-struct-legend {
@@ -691,8 +692,11 @@ html, body, #root {
 .img-seg-row-sos     { border-left-color: #f9a825; }
 .img-seg-row-scan    { border-left-color: #37474f; }
 .img-seg-row-misc    { border-left-color: #78909c; }
+.img-seg-row-ccitt   { border-left-color: #1565c0; }
 
 .img-td-marker  { color: var(--accent); font-weight: 600; letter-spacing: 0.03em; }
 .img-td-name    { color: var(--text); font-weight: 500; }
 .img-td-addr    { color: var(--text-dim); }
 .img-td-summary { color: var(--text); white-space: normal; max-width: 280px; }
+
+.img-ccitt-standard { color: var(--text-dim); font-size: 10px; font-weight: 400; }

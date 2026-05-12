@@ -149,6 +149,36 @@ export interface JpegStructureSegment {
   is_scan: boolean
 }
 
+export interface CcittParam {
+  key: string
+  value: string
+  meaning: string
+}
+
+export interface CcittStructureSegment {
+  label: string
+  offset: number
+  size: number
+  color: string
+}
+
+export interface CcittData {
+  k: number
+  columns: number
+  rows: number | null
+  end_of_block: boolean
+  end_of_line: boolean
+  encoded_byte_align: boolean
+  black_is_1: boolean
+  damaged_rows_before_error: number
+  compression_name: string
+  compression_short: string
+  standard: string
+  params: CcittParam[]
+  raw_size: number
+  structure: CcittStructureSegment[]
+}
+
 export interface ImageDetailData {
   width: number | null
   height: number | null
@@ -162,6 +192,7 @@ export interface ImageDetailData {
     structure: JpegStructureSegment[]
     frame_info: JpegFrameInfo | null
   } | null
+  ccitt: CcittData | null
 }
 
 export async function fetchImageDetail(
