@@ -5,9 +5,37 @@ import { fetchObjectDetail, imageUrl } from '../api'
 interface Props {
   node: TreeNode | null
   uploadId: string | null
+  onJumpToObj: (num: number) => void
 }
 
-const DetailPane: React.FC<Props> = ({ node, uploadId }) => {
+/** Parse detail text and turn every "N G R" reference into a clickable span. */
+function renderDetail(text: string, onJump: (num: number) => void): React.ReactNode[] {
+  const refRe = /\b(\d+)\s+(\d+)\s+R\b/g
+  const result: React.ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = refRe.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      result.push(text.slice(lastIndex, match.index))
+    }
+    const num = parseInt(match[1], 10)
+    result.push(
+      <span
+        key={match.index}
+        className="ref-link"
+        title={`Jump to object ${num}`}
+        onClick={() => onJump(num)}
+      >
+        {match[0]}
+      </span>
+    )
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < text.length) result.push(text.slice(lastIndex))
+  return result
+}
+
+const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
   const [detail, setDetail] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -96,7 +124,7 @@ const DetailPane: React.FC<Props> = ({ node, uploadId }) => {
         <div className="detail-text-section">
           {loading && <div className="detail-loading">Loading…</div>}
           {error && <div className="detail-error">{error}</div>}
-          {!loading && !error && <pre className="detail-text">{detail}</pre>}
+          {!loading && !error && <pre className="detail-text">{renderDetail(detail, onJumpToObj)}</pre>}
         </div>
       </div>
     </div>

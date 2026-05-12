@@ -1,10 +1,15 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import type { TreeNode } from './api'
 import { uploadPdf } from './api'
 import DetailPane from './components/DetailPane'
 import Toolbar from './components/Toolbar'
 import TreePane from './components/TreePane'
+
+function buildObjMap(node: TreeNode, map: Map<number, TreeNode>) {
+  if (node.obj_num >= 0) map.set(node.obj_num, node)
+  for (const child of node.children) buildObjMap(child, map)
+}
 
 function App() {
   const [uploadId, setUploadId] = useState<string | null>(null)
@@ -14,6 +19,12 @@ function App() {
   const [selected, setSelected] = useState<TreeNode | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const objMap = useMemo(() => {
+    const map = new Map<number, TreeNode>()
+    if (rootNode) buildObjMap(rootNode, map)
+    return map
+  }, [rootNode])
 
   const handleFile = useCallback(async (file: File) => {
     setLoading(true)
@@ -32,6 +43,11 @@ function App() {
       setLoading(false)
     }
   }, [])
+
+  const handleJumpToObj = useCallback((num: number) => {
+    const node = objMap.get(num)
+    if (node) setSelected(node)
+  }, [objMap])
 
   const treeNodes: TreeNode[] = rootNode ? [rootNode] : []
 
@@ -64,7 +80,7 @@ function App() {
           <PanelResizeHandle className="resize-handle" />
 
           <Panel minSize={30} className="panel-right">
-            <DetailPane node={selected} uploadId={uploadId} />
+            <DetailPane node={selected} uploadId={uploadId} onJumpToObj={handleJumpToObj} />
           </Panel>
         </PanelGroup>
       </div>

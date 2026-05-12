@@ -8,7 +8,7 @@ import io
 from dataclasses import dataclass, field
 from typing import Any
 
-from .filters import flat_decode, ascii_hex_decode, ascii85_decode
+from .filters import flat_decode, ascii_hex_decode, ascii85_decode, dct_decode
 from .objects import PdfObject, PdfObjType, PdfRef
 from .parser import PdfParser
 from .reader import PdfReader
@@ -111,13 +111,22 @@ def _detail(obj: PdfObject, indent: int = 0) -> str:
             lines.append("stream")
             lines.append(f"[{len(obj.stream_raw)} bytes raw]")
             if obj.stream_decoded:
-                show = min(len(obj.stream_decoded), 4096)
-                lines.append(f"[{len(obj.stream_decoded)} bytes decoded]")
-                lines.append(
-                    f"--- decoded content (first {show} bytes) ---"
-                )
-                text = _bytes_to_printable(obj.stream_decoded[:show])
-                lines.append(text)
+                decoded = obj.stream_decoded
+                lines.append(f"[{len(decoded)} bytes decoded]")
+                if _is_binary(decoded):
+                    total = len(decoded)
+                    capped = total > _HEX_DUMP_MAX
+                    label = f"--- decoded hex ({total} bytes" + (", first 64K shown" if capped else "") + ") ---"
+                    lines.append(label)
+                    lines.append(_hex_dump(decoded))
+                else:
+                    show = min(len(decoded), 4096)
+                    lines.append(
+                        f"--- decoded content (first {show} bytes) ---"
+                        if show < len(decoded) else
+                        "--- decoded content ---"
+                    )
+                    lines.append(_bytes_to_printable(decoded[:show]))
             else:
                 total = len(obj.stream_raw)
                 capped = total > _HEX_DUMP_MAX
@@ -127,6 +136,18 @@ def _detail(obj: PdfObject, indent: int = 0) -> str:
             lines.append("endstream")
         return "\n".join(lines)
     return pad + "?"
+
+
+def _is_binary(data: bytes, sample: int = 512, threshold: float = 0.15) -> bool:
+    """Return True if more than *threshold* fraction of sampled bytes are non-printable."""
+    chunk = data[:sample]
+    if not chunk:
+        return False
+    non_print = sum(
+        1 for b in chunk
+        if (b < 32 and b not in (9, 10, 13)) or b > 126  # outside printable ASCII
+    )
+    return (non_print / len(chunk)) > threshold
 
 
 def _bytes_to_printable(data: bytes) -> str:
@@ -189,6 +210,8 @@ def _decode_stream(obj: PdfObject) -> bytes | None:
             decoded = ascii_hex_decode(data)
         elif name == "ASCII85Decode":
             decoded = ascii85_decode(data)
+        elif name == "DCTDecode":
+            decoded = dct_decode(data)
         else:
             decoded = None  # unsupported filter — leave as-is
 

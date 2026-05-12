@@ -4,6 +4,7 @@ Python has built-in zlib so FlateDecode works without DLLs.
 """
 from __future__ import annotations
 
+import io
 import zlib
 
 
@@ -18,6 +19,16 @@ def flat_decode(data: bytes) -> bytes | None:
         except zlib.error:
             continue
     return None
+
+
+def dct_decode(data: bytes) -> bytes | None:
+    """Decode DCTDecode (JPEG) stream to raw pixel bytes via PIL."""
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(data))
+        return img.tobytes()
+    except Exception:
+        return None
 
 
 def ascii_hex_decode(data: bytes) -> bytes | None:
