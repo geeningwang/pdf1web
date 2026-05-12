@@ -172,6 +172,7 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     is_image = False
     is_icc_profile = False
     is_content_stream = False
+    is_palette = False
     image_filter: str | None = None
     if obj and (obj.is_dict() or obj.type == PdfObjType.Stream):
         st = obj.get("Subtype")
@@ -190,12 +191,19 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                     not_special = not (type_obj.is_name() and type_obj.sval in ('ObjStm', 'XRef'))
                     if not_special and not _is_binary(decoded) and _is_content_stream_data(decoded):
                         is_content_stream = True
+            # Detect indexed color palette: stream with only Length, small and divisible by 3
+            if not is_image and not is_icc_profile and not is_content_stream:
+                keys = set(obj.dict.keys())
+                stripped = obj.stream_raw.rstrip(b'\x00\x09\x0a\x0c\x0d\x20')
+                if (keys <= {"Length"} and 0 < len(stripped) <= 768 and len(stripped) % 3 == 0):
+                    is_palette = True
 
     return {
         "detail": detail,
         "is_image": is_image,
         "is_icc_profile": is_icc_profile,
         "is_content_stream": is_content_stream,
+        "is_palette": is_palette,
         "image_filter": image_filter,
         "obj_num": num,
         "gen_num": gen,
@@ -260,6 +268,41 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         raise HTTPException(422, "Not a valid content stream")
 
     return result
+
+
+@app.get("/api/palette/{upload_id}/{num}/{gen}")
+def get_palette(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Return palette entries for an Indexed color space lookup stream."""
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+
+    obj = doc.resolve_num(num, gen)
+    if obj is None or obj.type != PdfObjType.Stream:
+        raise HTTPException(404, "Object not found or not a stream")
+
+    raw = obj.stream_raw.rstrip(b'\x00\x09\x0a\x0c\x0d\x20')
+    if len(raw) == 0 or len(raw) % 3 != 0:
+        raise HTTPException(422, "Not a valid RGB palette stream")
+
+    entries = []
+    for i in range(0, len(raw), 3):
+        r, g, b = raw[i], raw[i + 1], raw[i + 2]
+        # Compute luminance to decide label text color
+        lum = 0.299 * r + 0.587 * g + 0.114 * b
+        entries.append({
+            "index": i // 3,
+            "r": r, "g": g, "b": b,
+            "hex": f"#{r:02x}{g:02x}{b:02x}",
+            "dark_bg": lum < 128,
+        })
+
+    return {
+        "entry_count": len(entries),
+        "channels": 3,
+        "raw_size": len(obj.stream_raw),
+        "entries": entries,
+    }
 
 
 @app.get("/api/image_detail/{upload_id}/{num}/{gen}")

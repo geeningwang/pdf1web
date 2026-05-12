@@ -23,6 +23,7 @@ export interface ObjectDetailResponse {
   is_image: boolean
   is_icc_profile: boolean
   is_content_stream: boolean
+  is_palette: boolean
   image_filter: string | null
   obj_num: number
   gen_num: number
@@ -260,6 +261,32 @@ export async function fetchContentStream(
   gen: number,
 ): Promise<ContentStreamData | null> {
   const res = await fetch(`${BASE}/content_stream/${uploadId}/${num}/${gen}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+export interface PaletteEntry {
+  index: number
+  r: number
+  g: number
+  b: number
+  hex: string
+  dark_bg: boolean
+}
+
+export interface PaletteData {
+  entry_count: number
+  channels: number
+  raw_size: number
+  entries: PaletteEntry[]
+}
+
+export async function fetchPaletteData(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<PaletteData | null> {
+  const res = await fetch(`${BASE}/palette/${uploadId}/${num}/${gen}`)
   if (!res.ok) return null
   return res.json()
 }
