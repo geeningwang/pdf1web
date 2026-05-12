@@ -10,6 +10,7 @@ from typing import Any
 
 from .filters import flat_decode, ascii_hex_decode, ascii85_decode, dct_decode
 from .icc import parse_icc_profile
+from .jpeg import parse_jpeg
 from .objects import PdfObject, PdfObjType, PdfRef
 from .parser import PdfParser
 from .reader import PdfReader
@@ -111,7 +112,31 @@ def _detail(obj: PdfObject, indent: int = 0) -> str:
         if t == PdfObjType.Stream:
             lines.append("stream")
             lines.append(f"[{len(obj.stream_raw)} bytes raw]")
-            if obj.stream_decoded:
+
+            # --- JPEG (DCTDecode) streams: annotate the raw JPEG bytes ---
+            _f = obj.get("Filter")
+            _filter_name = _f.sval if _f.is_name() else ''
+            _is_jpeg = (
+                _filter_name == 'DCTDecode'
+                and len(obj.stream_raw) >= 4
+                and obj.stream_raw[:2] == b'\xFF\xD8'
+            )
+
+            if _is_jpeg:
+                jpeg_info = parse_jpeg(obj.stream_raw)
+                raw_sz = len(obj.stream_raw)
+                if jpeg_info:
+                    lines.append(f'--- JPEG stream, annotated ({raw_sz} bytes) ---')
+                    lines.append(_jpeg_annotated_hex(obj.stream_raw, jpeg_info['structure']))
+                else:
+                    capped = raw_sz > _HEX_DUMP_MAX
+                    lines.append(f'--- raw hex ({raw_sz} bytes' + (', first 64K shown' if capped else '') + ') ---')
+                    lines.append(_hex_dump(obj.stream_raw))
+                if obj.stream_decoded:
+                    decoded = obj.stream_decoded
+                    lines.append(f'[{len(decoded)} bytes decoded — raw pixel bytes]')
+
+            elif obj.stream_decoded:
                 decoded = obj.stream_decoded
                 lines.append(f"[{len(decoded)} bytes decoded]")
                 if _is_binary(decoded):
@@ -191,7 +216,7 @@ def _hex_dump_section(data: bytes, start_addr: int, remaining: int) -> tuple[str
         lines.append(f'{start_addr + i:04X}: {hex_part}')
     consumed = len(chunk)
     if len(data) > consumed:
-        lines.append(f'     … {len(data) - consumed} more bytes (64K global limit reached) …')
+        lines.append(f'     … {len(data) - consumed} more bytes …')
     return '\n'.join(lines), consumed
 
 
@@ -209,6 +234,47 @@ def _icc_annotated_hex(data: bytes, structure: list[dict]) -> str:
             section_hex, consumed = _hex_dump_section(data[off:off + sz], start_addr=off, remaining=remaining)
             lines.append(section_hex)
             remaining -= consumed
+        else:
+            lines.append(f'     … {sz} bytes (64K global limit reached) …')
+        lines.append('')
+    return '\n'.join(lines)
+
+
+_JPEG_SCAN_PREVIEW = 64  # bytes of compressed scan data to show in annotated hex
+
+
+def _jpeg_annotated_hex(data: bytes, structure: list[dict]) -> str:
+    """Generate section-annotated hex dump for a JPEG stream, capped at 64K total.
+
+    Entropy-coded scan data is capped at _JPEG_SCAN_PREVIEW bytes because it
+    is incomprehensible as a hex dump regardless of length.
+    """
+    lines: list[str] = []
+    remaining = _HEX_DUMP_MAX
+    for seg in structure:  # already in stream order from parse_jpeg
+        off = seg['offset']
+        sz = seg['size']
+        end = off + sz - 1
+        lines.append(f"=== {seg['label']} ===")
+        lines.append(f'    0x{off:04X} – 0x{end:04X}  ({sz} bytes)')
+        if remaining > 0:
+            # Cap scan data at a small preview; everything else up to the global budget
+            if seg.get('is_scan'):
+                cap = _JPEG_SCAN_PREVIEW
+                # Pass only the preview slice so _hex_dump_section won't append its own truncation note
+                section_hex, consumed = _hex_dump_section(
+                    data[off:off + cap], start_addr=off, remaining=cap
+                )
+                lines.append(section_hex)
+                remaining -= consumed
+                if sz > cap:
+                    lines.append(f'     … {sz - cap} more bytes (entropy-coded; not shown) …')
+            else:
+                section_hex, consumed = _hex_dump_section(
+                    data[off:off + sz], start_addr=off, remaining=remaining
+                )
+                lines.append(section_hex)
+                remaining -= consumed
         else:
             lines.append(f'     … {sz} bytes (64K global limit reached) …')
         lines.append('')

@@ -22,6 +22,7 @@ export interface ObjectDetailResponse {
   detail: string
   is_image: boolean
   is_icc_profile: boolean
+  image_filter: string | null
   obj_num: number
   gen_num: number
 }
@@ -117,6 +118,58 @@ export async function fetchIccProfile(
   gen: number,
 ): Promise<IccData | null> {
   const res = await fetch(`${BASE}/icc/${uploadId}/${num}/${gen}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+export interface JpegSegment {
+  marker: string
+  name: string
+  desc: string
+  offset: number
+  size: number
+  summary: string
+  color: string
+  is_scan: boolean
+}
+
+export interface JpegFrameInfo {
+  type: string
+  precision: number
+  height: number
+  width: number
+  components: number
+}
+
+export interface JpegStructureSegment {
+  label: string
+  offset: number
+  size: number
+  color: string
+  is_scan: boolean
+}
+
+export interface ImageDetailData {
+  width: number | null
+  height: number | null
+  bits_per_component: number | null
+  color_space: string | null
+  filter: string | null
+  raw_size: number
+  decoded_size: number | null
+  jpeg: {
+    segments: JpegSegment[]
+    structure: JpegStructureSegment[]
+    frame_info: JpegFrameInfo | null
+  } | null
+}
+
+export async function fetchImageDetail(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<ImageDetailData | null> {
+  const res = await fetch(`${BASE}/image_detail/${uploadId}/${num}/${gen}`)
   if (!res.ok) return null
   return res.json()
 }

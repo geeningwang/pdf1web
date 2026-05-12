@@ -21,6 +21,7 @@ from PIL import Image
 
 from pdf.document import PdfDocument, _decode_stream, _detail
 from pdf.icc import parse_icc_profile
+from pdf.jpeg import parse_jpeg
 from pdf.objects import PdfObjType
 from pdf.xref import XrefEntryType
 
@@ -167,12 +168,15 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     obj = doc.resolve_num(num, gen)
     is_image = False
     is_icc_profile = False
+    image_filter: str | None = None
     if obj and (obj.is_dict() or obj.type == PdfObjType.Stream):
         st = obj.get("Subtype")
         is_image = st.is_name() and st.sval == "Image"
         if obj.type == PdfObjType.Stream:
             from pdf.filters import flat_decode
             fobj = obj.get("Filter")
+            if fobj.is_name():
+                image_filter = fobj.sval if is_image else None
             if fobj.is_name() and fobj.sval == "FlateDecode":
                 decoded = flat_decode(obj.stream_raw)
                 if decoded and len(decoded) >= 40 and decoded[36:40] == b'acsp':
@@ -182,6 +186,7 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "detail": detail,
         "is_image": is_image,
         "is_icc_profile": is_icc_profile,
+        "image_filter": image_filter,
         "obj_num": num,
         "gen_num": gen,
     }
@@ -214,6 +219,69 @@ def get_icc_profile(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         raise HTTPException(422, "Not a valid ICC profile")
 
     return icc
+
+
+@app.get("/api/image_detail/{upload_id}/{num}/{gen}")
+def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Return structured metadata and JPEG segment info for an XObject image."""
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+
+    obj = doc.resolve_num(num, gen)
+    if obj is None or obj.type != PdfObjType.Stream:
+        raise HTTPException(404, "Object not found or not a stream")
+
+    # PDF dictionary fields
+    w_obj = obj.get("Width")
+    h_obj = obj.get("Height")
+    bpc_obj = obj.get("BitsPerComponent")
+    cs_obj = obj.get("ColorSpace")
+    fobj = obj.get("Filter")
+
+    width  = w_obj.ival  if w_obj.is_int()  else None
+    height = h_obj.ival  if h_obj.is_int()  else None
+    bpc    = bpc_obj.ival if bpc_obj.is_int() else None
+
+    # Colour space as brief string
+    from pdf.document import _brief
+    cs_str = _brief(cs_obj) if not cs_obj.is_null() else None
+
+    # Filter name (handle both /Name and [/Name] forms)
+    filter_name: str | None = None
+    if fobj.is_name():
+        filter_name = fobj.sval
+    elif fobj.is_array() and fobj.arr and fobj.arr[0].is_name():
+        filter_name = fobj.arr[0].sval
+
+    raw_size = len(obj.stream_raw)
+
+    # Decoded size: compute from JPEG frame info (avoids full pixel decode)
+    decoded_size: int | None = None
+    jpeg_data: dict | None = None
+
+    if filter_name == "DCTDecode" and len(obj.stream_raw) >= 4 and obj.stream_raw[:2] == b'\xFF\xD8':
+        jpeg_info = parse_jpeg(obj.stream_raw)
+        if jpeg_info:
+            fi = jpeg_info.get("frame_info")
+            if fi:
+                decoded_size = fi["width"] * fi["height"] * fi["components"]
+            jpeg_data = {
+                "segments": jpeg_info["segments"],
+                "structure": jpeg_info["structure"],
+                "frame_info": fi,
+            }
+
+    return {
+        "width": width,
+        "height": height,
+        "bits_per_component": bpc,
+        "color_space": cs_str,
+        "filter": filter_name,
+        "raw_size": raw_size,
+        "decoded_size": decoded_size,
+        "jpeg": jpeg_data,
+    }
 
 
 @app.get("/api/image/{upload_id}/{num}/{gen}")

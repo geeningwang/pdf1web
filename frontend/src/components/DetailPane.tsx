@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import type { TreeNode, IccData } from '../api'
-import { fetchObjectDetail, fetchIccProfile, imageUrl } from '../api'
+import type { TreeNode, IccData, ImageDetailData } from '../api'
+import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, imageUrl } from '../api'
 import IccPane from './IccPane'
+import ImagePane from './ImagePane'
 
 interface Props {
   node: TreeNode | null
@@ -43,6 +44,7 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
   const [imageError, setImageError] = useState<string | null>(null)
   const [isImageResolved, setIsImageResolved] = useState(false)
   const [iccData, setIccData] = useState<IccData | null>(null)
+  const [imageDetail, setImageDetail] = useState<ImageDetailData | null>(null)
 
   useEffect(() => {
     if (!node) {
@@ -57,6 +59,7 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
     setIsImageResolved(isImageNode)
     setImageError(null)
     setIccData(null)
+    setImageDetail(null)
     setError(null)
 
     // If the node already has detail text, use it directly
@@ -82,6 +85,10 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
         if (resp.is_icc_profile) {
           fetchIccProfile(uploadId, node.obj_num, node.gen_num)
             .then(icc => setIccData(icc))
+        }
+        if (resp.is_image) {
+          fetchImageDetail(uploadId, node.obj_num, node.gen_num)
+            .then(d => setImageDetail(d))
         }
       })
       .catch(err => {
@@ -122,6 +129,12 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
                 />
               )
             }
+          </div>
+        )}
+
+        {canShowImage && imageDetail && (
+          <div className="detail-image-meta-section">
+            <ImagePane data={imageDetail} />
           </div>
         )}
 

@@ -545,3 +545,154 @@ html, body, #root {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #555; }
+
+/* -----------------------------------------------------------------------
+   Image detail pane (ImagePane)
+   ----------------------------------------------------------------------- */
+
+/* Section slot — sits between the image preview and the text pane */
+.detail-image-meta-section {
+  flex: 0 0 auto;
+  max-height: 45%;
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+}
+
+.img-pane {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.img-header {
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+.img-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.img-subtitle {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.img-section-label {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 10px 0 5px;
+}
+
+/* --- Structure bar --------------------------------------------------- */
+.img-struct-bar {
+  height: 12px;
+  display: flex;
+  gap: 1px;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.img-struct-seg { min-width: 2px; transition: opacity 0.15s; }
+.img-struct-seg:hover { opacity: 0.75; }
+
+/* Segment colours */
+.img-seg-soi     { background: #43a047; }
+.img-seg-eoi     { background: #66bb6a; }
+.img-seg-app     { background: #00acc1; }
+.img-seg-quant   { background: #fb8c00; }
+.img-seg-frame   { background: #5c6bc0; }
+.img-seg-huffman { background: #8e24aa; }
+.img-seg-sos     { background: #f9a825; }
+.img-seg-scan    { background: #37474f; }
+.img-seg-misc    { background: #78909c; }
+
+/* Legend */
+.img-struct-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+.img-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.img-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.img-legend-total {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Metadata key-value table --------------------------------------- */
+.img-meta-table {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 2px 8px;
+  margin-bottom: 4px;
+}
+.img-meta-row { display: contents; }
+.img-meta-key {
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 1px 0;
+}
+.img-meta-val {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 0;
+  word-break: break-all;
+}
+
+/* --- JPEG segment table --------------------------------------------- */
+.img-segs-wrap {
+  overflow-x: auto;
+}
+.img-segs-table {
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  width: 100%;
+}
+.img-segs-table th {
+  padding: 3px 8px 3px 4px;
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.img-segs-table td {
+  padding: 2px 8px 2px 4px;
+  white-space: nowrap;
+}
+.img-segs-row { border-left: 3px solid transparent; }
+
+/* Row left-border colours map to segment colour */
+.img-seg-row-soi     { border-left-color: #43a047; }
+.img-seg-row-eoi     { border-left-color: #66bb6a; }
+.img-seg-row-app     { border-left-color: #00acc1; }
+.img-seg-row-quant   { border-left-color: #fb8c00; }
+.img-seg-row-frame   { border-left-color: #5c6bc0; }
+.img-seg-row-huffman { border-left-color: #8e24aa; }
+.img-seg-row-sos     { border-left-color: #f9a825; }
+.img-seg-row-scan    { border-left-color: #37474f; }
+.img-seg-row-misc    { border-left-color: #78909c; }
+
+.img-td-marker  { color: var(--accent); font-weight: 600; letter-spacing: 0.03em; }
+.img-td-name    { color: var(--text); font-weight: 500; }
+.img-td-addr    { color: var(--text-dim); }
+.img-td-summary { color: var(--text); white-space: normal; max-width: 280px; }
