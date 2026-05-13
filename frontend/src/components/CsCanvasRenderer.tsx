@@ -276,7 +276,8 @@ function parseDashArray(raw: string): number[] {
 function renderOps(
   ctx: CanvasRenderingContext2D,
   data: ContentStreamData,
-  loadedImages: Map<string, HTMLImageElement>,
+  loadedImages: Map<string, HTMLImageElement | HTMLCanvasElement>,
+  loadedFontFamilies: Map<string, string>,
 ): void {
   const fontResources = data.resources?.font ?? {}
   const curFont = (): FontRes => fontResources[ts.fontName]
@@ -301,14 +302,19 @@ function renderOps(
   function showText(text: string): void {
     if (!text) return
     const [a, b, c, d, e, f] = ts.tm
-    const fontRes   = fontResources[ts.fontName]
-    const { cssFamily, bold, italic } = fontNameToStyle(fontRes?.base_font)
+    const fontEntry = curFont()
+    const { cssFamily, bold, italic } = fontNameToStyle(fontEntry?.base_font)
+    // Prefer the embedded font loaded from the PDF; fall back to CSS font stack
+    const family = loadedFontFamilies.get(ts.fontName) ?? cssFamily
     const hs = ts.hScale / 100
     ctx.save()
     ctx.transform(a, b, c, d, e, f)
     // Scale by font size; negate Y to undo the coordinate-system Y-flip.
     ctx.transform(ts.fontSize * hs, 0, 0, -ts.fontSize, 0, ts.rise)
-    ctx.font = `${italic ? 'italic' : 'normal'} ${bold ? 'bold' : 'normal'} 1px ${cssFamily}`
+    const fontStyle = loadedFontFamilies.has(ts.fontName)
+      ? `1px ${family}`
+      : `${italic ? 'italic' : 'normal'} ${bold ? 'bold' : 'normal'} 1px ${family}`
+    ctx.font = fontStyle
     if (ts.renderMode !== 3) {  // 3 = invisible
       const fill   = ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6
       const stroke = ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6
@@ -318,8 +324,8 @@ function renderOps(
     ctx.restore()
 
     // Advance text matrix using actual /Widths; fall back to rough estimate
-    const widths    = fontRes?.widths ?? null
-    const firstChar = fontRes?.first_char ?? 0
+    const widths    = fontEntry?.widths ?? null
+    const firstChar = fontEntry?.first_char ?? 0
     let adv = 0
     for (const ch of text) {
       const code = ch.charCodeAt(0)
@@ -467,9 +473,9 @@ function renderOps(
           const img = loadedImages.get(name)
           if (img) {
             ctx.save()
-            // PDF images fill a 1×1 unit square; flip vertically to undo outer Y-flip
             ctx.transform(1, 0, 0, -1, 0, 1)
-            ctx.drawImage(img, 0, 0, 1, 1)
+            const src = img instanceof HTMLCanvasElement ? img : img
+            ctx.drawImage(src, 0, 0, 1, 1)
             ctx.restore()
           }
         }
@@ -551,6 +557,36 @@ function renderOps(
 
 // ── Component ───────────────────────────────────────────────────────────────
 
+/** Composite a color image + a grayscale SMask onto an RGBA offscreen canvas. */
+async function compositeWithSMask(
+  colorImg: HTMLImageElement,
+  smaskImg: HTMLImageElement,
+): Promise<HTMLCanvasElement> {
+  const w = colorImg.naturalWidth  || colorImg.width
+  const h = colorImg.naturalHeight || colorImg.height
+  const off = document.createElement('canvas')
+  off.width = w; off.height = h
+  const ctx = off.getContext('2d')!
+  ctx.drawImage(colorImg, 0, 0)
+  const imageData = ctx.getImageData(0, 0, w, h)
+
+  // Draw SMask into a separate canvas and read its luma values
+  const mOff = document.createElement('canvas')
+  mOff.width = w; mOff.height = h
+  const mCtx = mOff.getContext('2d')!
+  mCtx.drawImage(smaskImg, 0, 0, w, h)
+  const maskData = mCtx.getImageData(0, 0, w, h)
+
+  // Apply alpha: the SMask red channel is the alpha (grayscale → all channels same)
+  const d = imageData.data
+  const m = maskData.data
+  for (let i = 0; i < d.length; i += 4) {
+    d[i + 3] = m[i]  // red channel of grayscale mask → alpha
+  }
+  ctx.putImageData(imageData, 0, 0)
+  return off
+}
+
 const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef   = useRef<HTMLDivElement>(null)
@@ -586,29 +622,64 @@ const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
     ctx.fillStyle = 'white'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Initial transform: PDF user space → canvas pixels.
-    // PDF origin is bottom-left, Y up. Canvas origin is top-left, Y down.
     ctx.setTransform(scale, 0, 0, -scale, -x0 * scale, y1 * scale)
 
     setStatus('loading')
 
-    // Pre-load all image XObjects
     const xobjectRes = data.resources?.xobject ?? {}
-    const loadedImages = new Map<string, HTMLImageElement>()
-    const promises = Object.entries(xobjectRes)
-      .filter(([, v]) => v.subtype === 'Image')
-      .map(([name, res]) =>
-        new Promise<void>(resolve => {
-          const img = new Image()
-          img.onload  = () => { loadedImages.set(name, img); resolve() }
-          img.onerror = () => resolve()
-          img.src = imageUrl(uploadId, res.num, res.gen)
-        })
+    const fontRes    = data.resources?.font    ?? {}
+
+    // ── 1. Load embedded fonts via FontFace API ──────────────────────────
+    const loadedFontFamilies = new Map<string, string>()  // pdf resource name → CSS family name
+    const fontPromises = Object.entries(fontRes)
+      .filter(([, f]) => f.font_file_num !== null)
+      .map(([name, f]) =>
+        fetch(`/api/ttf_raw/${uploadId}/${f.font_file_num}/${f.font_file_gen}`)
+          .then(r => r.ok ? r.arrayBuffer() : Promise.reject())
+          .then(buf => {
+            // Use a unique family name to avoid clashing with system fonts
+            const family = `PdfFont_${uploadId.slice(0, 8)}_${name}`
+            const face = new FontFace(family, buf)
+            return face.load().then(loaded => {
+              document.fonts.add(loaded)
+              loadedFontFamilies.set(name, family)
+            })
+          })
+          .catch(() => { /* embedded font load failed — fall back to CSS stack */ })
       )
 
-    Promise.all(promises).then(() => {
+    // ── 2. Load images (with SMask compositing) ──────────────────────────
+    const loadedImages = new Map<string, HTMLImageElement | HTMLCanvasElement>()
+
+    function loadImg(url: string): Promise<HTMLImageElement> {
+      return new Promise(resolve => {
+        const img = new Image()
+        img.onload  = () => resolve(img)
+        img.onerror = () => resolve(img)   // resolve anyway; draw will silently fail
+        img.src = url
+      })
+    }
+
+    const imagePromises = Object.entries(xobjectRes)
+      .filter(([, v]) => v.subtype === 'Image')
+      .map(async ([name, res]) => {
+        const colorImg = await loadImg(imageUrl(uploadId, res.num, res.gen))
+        if (res.smask_num !== null && res.smask_gen !== null) {
+          try {
+            const maskImg  = await loadImg(imageUrl(uploadId, res.smask_num, res.smask_gen))
+            const composed = await compositeWithSMask(colorImg, maskImg)
+            loadedImages.set(name, composed)
+            return
+          } catch {
+            // fall through to plain image
+          }
+        }
+        loadedImages.set(name, colorImg)
+      })
+
+    Promise.all([...fontPromises, ...imagePromises]).then(() => {
       try {
-        renderOps(ctx, data, loadedImages)
+        renderOps(ctx, data, loadedImages, loadedFontFamilies)
         setStatus('done')
       } catch (err) {
         setStatus('error')

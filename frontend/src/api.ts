@@ -269,7 +269,13 @@ export interface ContentStreamData {
   structure: ContentStreamStructSeg[]
   category_counts: Record<string, number>
   resources?: {
-    xobject: Record<string, { num: number; gen: number; subtype: string }>
+    xobject: Record<string, {
+      num: number
+      gen: number
+      subtype: string
+      smask_num: number | null
+      smask_gen: number | null
+    }>
     font: Record<string, {
       num: number
       gen: number
@@ -279,6 +285,8 @@ export interface ContentStreamData {
       last_char: number
       widths: number[] | null
       cmap: Record<number, string> | null
+      font_file_num: number | null
+      font_file_gen: number | null
     }>
   }
   media_box?: [number, number, number, number] | null

@@ -620,10 +620,18 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                     if xobj_resolved is not None:
                         subtype_obj = xobj_resolved.get('Subtype')
                         subtype = subtype_obj.sval if subtype_obj.is_name() else 'Unknown'
+                        smask_num: int | None = None
+                        smask_gen: int | None = None
+                        smask_ref = xobj_resolved.get('SMask')
+                        if smask_ref.is_ref():
+                            smask_num = smask_ref.ref.num
+                            smask_gen = smask_ref.ref.gen
                         resources['xobject'][name] = {
                             'num': val.ref.num,
                             'gen': val.ref.gen,
                             'subtype': subtype,
+                            'smask_num': smask_num,
+                            'smask_gen': smask_gen,
                         }
         font_obj = _resolve_res_dict(res_obj.get('Font'))
         if font_obj is not None and font_obj.is_dict():
@@ -632,7 +640,8 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                     font_meta: dict[str, Any] = {'num': val.ref.num, 'gen': val.ref.gen,
                                                   'base_font': None, 'subtype': None,
                                                   'first_char': 0, 'last_char': 255,
-                                                  'widths': None}
+                                                  'widths': None,
+                                                  'font_file_num': None, 'font_file_gen': None}
                     font_res = doc.resolve_num(val.ref.num, val.ref.gen)
                     if font_res is not None and font_res.is_dict():
                         bf = font_res.get('BaseFont')
@@ -651,6 +660,17 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                                 elif w.type == PdfObjType.Real: wlist.append(w.dval)
                                 else: wlist.append(0.0)
                             font_meta['widths'] = wlist
+                        # Look for embedded font binary: FontDescriptor → FontFile2/FontFile3/FontFile
+                        fd_ref = font_res.get('FontDescriptor')
+                        if fd_ref.is_ref():
+                            fd_obj = doc.resolve_num(fd_ref.ref.num, fd_ref.ref.gen)
+                            if fd_obj is not None and fd_obj.is_dict():
+                                for ff_key in ('FontFile2', 'FontFile3', 'FontFile'):
+                                    ff_ref = fd_obj.get(ff_key)
+                                    if ff_ref.is_ref():
+                                        font_meta['font_file_num'] = ff_ref.ref.num
+                                        font_meta['font_file_gen'] = ff_ref.ref.gen
+                                        break
                     # Resolve /ToUnicode CMap → {char_code: unicode_char}
                     font_meta['cmap'] = None
                     tu_ref = font_res.get('ToUnicode') if font_res is not None else None
