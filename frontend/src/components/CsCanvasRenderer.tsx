@@ -108,6 +108,41 @@ function parseTJArray(raw: string): TJItem[] {
   return items
 }
 
+// ── PDF standard font → CSS mapping ───────────────────────────────────────
+
+const PDF_FONT_MAP: Record<string, string> = {
+  'Times-Roman':           '"Times New Roman", Times, serif',
+  'Times-Bold':            '"Times New Roman", Times, serif',
+  'Times-Italic':          '"Times New Roman", Times, serif',
+  'Times-BoldItalic':      '"Times New Roman", Times, serif',
+  'Helvetica':             'Arial, Helvetica, sans-serif',
+  'Helvetica-Bold':        'Arial, Helvetica, sans-serif',
+  'Helvetica-Oblique':     'Arial, Helvetica, sans-serif',
+  'Helvetica-BoldOblique': 'Arial, Helvetica, sans-serif',
+  'Courier':               '"Courier New", Courier, monospace',
+  'Courier-Bold':          '"Courier New", Courier, monospace',
+  'Courier-Oblique':       '"Courier New", Courier, monospace',
+  'Courier-BoldOblique':   '"Courier New", Courier, monospace',
+  'Symbol':                'Symbol, serif',
+  'ZapfDingbats':          '"Zapf Dingbats", serif',
+}
+
+interface FontStyle { cssFamily: string; bold: boolean; italic: boolean }
+
+function fontNameToStyle(baseFontName: string | null | undefined): FontStyle {
+  if (!baseFontName) return { cssFamily: 'sans-serif', bold: false, italic: false }
+  // Strip embedded-subset prefix e.g. "ABCDEF+FontName" → "FontName"
+  const name = baseFontName.replace(/^[A-Z]{6}\+/, '')
+  const cssFamily =
+    PDF_FONT_MAP[name] ??
+    (/[Cc]ourier|[Mm]ono/.test(name)
+      ? '"Courier New", Courier, monospace'
+      : /[Ss]erif/.test(name) && !/[Ss]ans/.test(name)
+        ? '"Times New Roman", Times, serif'
+        : 'Arial, Helvetica, sans-serif')
+  return { cssFamily, bold: /Bold/i.test(name), italic: /Italic|Oblique/i.test(name) }
+}
+
 // ── Matrix helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -193,6 +228,7 @@ function renderOps(
   data: ContentStreamData,
   loadedImages: Map<string, HTMLImageElement>,
 ): void {
+  const fontResources = data.resources?.font ?? {}
   let gs: GState = { ...DEFAULT_GS }
   const gsStack: GState[] = []
   let ts: TState = { ...DEFAULT_TS, tm: [...IDENTITY], tlm: [...IDENTITY] }
@@ -214,12 +250,14 @@ function renderOps(
   function showText(text: string): void {
     if (!text) return
     const [a, b, c, d, e, f] = ts.tm
+    const fontRes   = fontResources[ts.fontName]
+    const { cssFamily, bold, italic } = fontNameToStyle(fontRes?.base_font)
+    const hs = ts.hScale / 100
     ctx.save()
     ctx.transform(a, b, c, d, e, f)
-    // Scale by font size; negate Y to undo the outer coordinate-system flip.
-    const hs = ts.hScale / 100
+    // Scale by font size; negate Y to undo the coordinate-system Y-flip.
     ctx.transform(ts.fontSize * hs, 0, 0, -ts.fontSize, 0, ts.rise)
-    ctx.font = '1px sans-serif'
+    ctx.font = `${italic ? 'italic' : 'normal'} ${bold ? 'bold' : 'normal'} 1px ${cssFamily}`
     if (ts.renderMode !== 3) {  // 3 = invisible
       const fill   = ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6
       const stroke = ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6
@@ -228,10 +266,15 @@ function renderOps(
     }
     ctx.restore()
 
-    // Advance text matrix (approximate glyph width = 0.5 em per character)
+    // Advance text matrix using actual /Widths; fall back to rough estimate
+    const widths    = fontRes?.widths ?? null
+    const firstChar = fontRes?.first_char ?? 0
     let adv = 0
     for (const ch of text) {
-      const w0 = ch === ' ' ? 0.25 : 0.55   // rough approx in normalized units
+      const code = ch.charCodeAt(0)
+      const w0 = (widths && code >= firstChar && code < firstChar + widths.length)
+        ? widths[code - firstChar] / 1000
+        : ch === ' ' ? 0.25 : 0.55
       adv += (w0 * ts.fontSize + ts.charSpacing + (ch === ' ' ? ts.wordSpacing : 0)) * hs
     }
     ts.tm = matMul([1, 0, 0, 1, adv, 0], ts.tm)

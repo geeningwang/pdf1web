@@ -270,7 +270,15 @@ export interface ContentStreamData {
   category_counts: Record<string, number>
   resources?: {
     xobject: Record<string, { num: number; gen: number; subtype: string }>
-    font: Record<string, { num: number; gen: number }>
+    font: Record<string, {
+      num: number
+      gen: number
+      base_font: string | null
+      subtype: string | null
+      first_char: number
+      last_char: number
+      widths: number[] | null
+    }>
   }
   media_box?: [number, number, number, number] | null
 }

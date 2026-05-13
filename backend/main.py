@@ -586,7 +586,29 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         if font_obj is not None and font_obj.is_dict():
             for name, val in font_obj.dict.items():
                 if val.is_ref():
-                    resources['font'][name] = {'num': val.ref.num, 'gen': val.ref.gen}
+                    font_meta: dict[str, Any] = {'num': val.ref.num, 'gen': val.ref.gen,
+                                                  'base_font': None, 'subtype': None,
+                                                  'first_char': 0, 'last_char': 255,
+                                                  'widths': None}
+                    font_res = doc.resolve_num(val.ref.num, val.ref.gen)
+                    if font_res is not None and font_res.is_dict():
+                        bf = font_res.get('BaseFont')
+                        st = font_res.get('Subtype')
+                        fc = font_res.get('FirstChar')
+                        lc_obj = font_res.get('LastChar')
+                        wo = font_res.get('Widths')
+                        font_meta['base_font'] = bf.sval if bf.is_name() else None
+                        font_meta['subtype']    = st.sval if st.is_name() else None
+                        font_meta['first_char'] = int(fc.ival)     if fc.is_int() else 0
+                        font_meta['last_char']  = int(lc_obj.ival) if lc_obj.is_int() else 255
+                        if wo.is_array():
+                            wlist: list[float] = []
+                            for w in wo.arr:
+                                if w.is_int(): wlist.append(float(w.ival))
+                                elif w.type == PdfObjType.Real: wlist.append(w.dval)
+                                else: wlist.append(0.0)
+                            font_meta['widths'] = wlist
+                    resources['font'][name] = font_meta
 
     result['resources'] = resources
     result['media_box'] = media_box
