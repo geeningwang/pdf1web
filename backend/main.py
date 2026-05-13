@@ -490,6 +490,49 @@ def get_icc_profile(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     return icc
 
 
+def _parse_cmap_from_stream(obj: Any) -> dict[int, str]:
+    """Extract {char_code: unicode_char} from a /ToUnicode CMap stream."""
+    import re as _re
+    from pdf.filters import flat_decode
+
+    fobj = obj.get('Filter') if obj.is_dict() else None
+    if fobj is not None and fobj.is_name() and fobj.sval == 'FlateDecode':
+        raw = flat_decode(obj.stream_raw)
+    else:
+        raw = obj.stream_raw
+    if not raw:
+        return {}
+    text = raw.decode('latin-1', errors='replace')
+    cmap: dict[int, str] = {}
+
+    for block in _re.findall(r'beginbfchar(.*?)endbfchar', text, _re.DOTALL):
+        for m in _re.finditer(r'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>', block):
+            src = int(m.group(1), 16)
+            if src in cmap:
+                continue
+            try:
+                cmap[src] = bytes.fromhex(m.group(2)).decode('utf-16-be')
+            except Exception:
+                cmap[src] = '?'
+
+    for block in _re.findall(r'beginbfrange(.*?)endbfrange', text, _re.DOTALL):
+        for m in _re.finditer(
+            r'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>',
+            block,
+        ):
+            lo = int(m.group(1), 16)
+            hi = int(m.group(2), 16)
+            base_cp = int.from_bytes(bytes.fromhex(m.group(3)), 'big')
+            for i, src in enumerate(range(lo, hi + 1)):
+                if src not in cmap:
+                    try:
+                        cmap[src] = chr(base_cp + i)
+                    except Exception:
+                        cmap[src] = '?'
+
+    return cmap
+
+
 @app.get("/api/content_stream/{upload_id}/{num}/{gen}")
 def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     """Return parsed operator data for a PDF content stream."""
@@ -608,6 +651,13 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                                 elif w.type == PdfObjType.Real: wlist.append(w.dval)
                                 else: wlist.append(0.0)
                             font_meta['widths'] = wlist
+                    # Resolve /ToUnicode CMap → {char_code: unicode_char}
+                    font_meta['cmap'] = None
+                    tu_ref = font_res.get('ToUnicode') if font_res is not None else None
+                    if tu_ref is not None and tu_ref.is_ref():
+                        tu_obj = doc.resolve_num(tu_ref.ref.num, tu_ref.ref.gen)
+                        if tu_obj is not None and tu_obj.type == PdfObjType.Stream:
+                            font_meta['cmap'] = _parse_cmap_from_stream(tu_obj) or None
                     resources['font'][name] = font_meta
 
     result['resources'] = resources

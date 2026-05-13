@@ -278,6 +278,7 @@ export interface ContentStreamData {
       first_char: number
       last_char: number
       widths: number[] | null
+      cmap: Record<number, string> | null
     }>
   }
   media_box?: [number, number, number, number] | null

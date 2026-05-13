@@ -46,34 +46,84 @@ function cmykToCss(c: number, m: number, y: number, k: number): string {
   return rgbToCss(r, g, b)
 }
 
-// ── PDF string decode ───────────────────────────────────────────────────────
+// ── PDF string decode (font-aware) ─────────────────────────────────────────
 
-function decodePdfString(raw: string): string {
-  if (raw.startsWith('(') && raw.endsWith(')')) {
-    let s = raw.slice(1, -1)
-    s = s.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t')
-         .replace(/\\\(/g, '(').replace(/\\\)/g, ')').replace(/\\\\/g, '\\')
-    // Keep printable ASCII; replace others with placeholder
-    return s.split('').map(c => {
-      const code = c.charCodeAt(0)
-      return (code >= 0x20 && code < 0x7f) ? c : '\u00b7'
-    }).join('')
+type FontResEntry = NonNullable<ContentStreamData['resources']>['font'][string]
+type FontRes = FontResEntry | undefined
+
+/** Unescape a PDF literal string body (between the outer parens) to raw bytes. */
+function unescapePdfLiteralToBytes(s: string): number[] {
+  const bytes: number[] = []
+  let i = 0
+  while (i < s.length) {
+    if (s[i] !== '\\') { bytes.push(s.charCodeAt(i++) & 0xff); continue }
+    const next = s[i + 1]; i += 2
+    if      (next === 'n')  bytes.push(0x0a)
+    else if (next === 'r')  bytes.push(0x0d)
+    else if (next === 't')  bytes.push(0x09)
+    else if (next === 'b')  bytes.push(0x08)
+    else if (next === 'f')  bytes.push(0x0c)
+    else if (next === '(')  bytes.push(0x28)
+    else if (next === ')')  bytes.push(0x29)
+    else if (next === '\\') bytes.push(0x5c)
+    else if (next >= '0' && next <= '7') {
+      let oct = next
+      while (i < s.length && oct.length < 3 && s[i] >= '0' && s[i] <= '7') oct += s[i++]
+      bytes.push(parseInt(oct, 8) & 0xff)
+    }
+    // unknown escape: skip
   }
-  if (raw.startsWith('<') && raw.endsWith('>')) {
-    const hex = raw.slice(1, -1).replace(/\s/g, '')
+  return bytes
+}
+
+/**
+ * Decode a raw PDF string token (literal or hex) for the given font.
+ * Uses the font's ToUnicode CMap for glyph-code→Unicode lookup.
+ * Falls back to printable-ASCII for unmapped 1-byte codes.
+ */
+function decodePdfStringWithFont(raw: string, font: FontRes): string {
+  const isType0 = font?.subtype === 'Type0'
+  const cmap    = font?.cmap ?? null
+
+  if (raw.startsWith('(') && raw.endsWith(')')) {
+    const bytes = unescapePdfLiteralToBytes(raw.slice(1, -1))
     let result = ''
-    for (let i = 0; i < hex.length; i += 2) {
-      const byte = parseInt(hex.substr(i, 2), 16)
-      result += (byte >= 0x20 && byte < 0x7f) ? String.fromCharCode(byte) : '\u00b7'
+    if (isType0) {
+      for (let i = 0; i + 1 < bytes.length; i += 2) {
+        const code = (bytes[i] << 8) | bytes[i + 1]
+        result += cmap?.[code] ?? '\u00b7'
+      }
+    } else {
+      for (const b of bytes) {
+        result += cmap?.[b] ?? (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : '\u00b7')
+      }
     }
     return result
   }
+
+  if (raw.startsWith('<') && raw.endsWith('>')) {
+    const hex       = raw.slice(1, -1).replace(/\s/g, '')
+    const codeWidth = isType0 ? 4 : 2
+    let result = ''
+    for (let i = 0; i < hex.length; i += codeWidth) {
+      const code = parseInt(hex.substr(i, codeWidth), 16)
+      if (cmap && cmap[code] !== undefined) {
+        result += cmap[code]
+      } else {
+        const byte = parseInt(hex.substr(i, 2), 16)
+        result += byte >= 0x20 && byte < 0x7f ? String.fromCharCode(byte) : '\u00b7'
+      }
+    }
+    return result
+  }
+
   return raw
 }
 
 // ── TJ array parser ─────────────────────────────────────────────────────────
 
-type TJItem = { kind: 'str'; text: string } | { kind: 'num'; value: number }
+/** Items in a TJ array; strings kept as raw PDF tokens for font-aware decode. */
+type TJItem = { kind: 'str'; raw: string } | { kind: 'num'; value: number }
 
 function parseTJArray(raw: string): TJItem[] {
   const content = raw.startsWith('[') ? raw.slice(1, -1) : raw
@@ -90,12 +140,12 @@ function parseTJArray(raw: string): TJItem[] {
         else if (content[j] === ')') depth--
         j++
       }
-      items.push({ kind: 'str', text: decodePdfString(content.slice(i, j)) })
+      items.push({ kind: 'str', raw: content.slice(i, j) })
       i = j
     } else if (ch === '<') {
       let j = content.indexOf('>', i + 1)
       j = j >= 0 ? j + 1 : content.length
-      items.push({ kind: 'str', text: decodePdfString(content.slice(i, j)) })
+      items.push({ kind: 'str', raw: content.slice(i, j) })
       i = j
     } else {
       let j = i
@@ -229,6 +279,7 @@ function renderOps(
   loadedImages: Map<string, HTMLImageElement>,
 ): void {
   const fontResources = data.resources?.font ?? {}
+  const curFont = (): FontRes => fontResources[ts.fontName]
   let gs: GState = { ...DEFAULT_GS }
   const gsStack: GState[] = []
   let ts: TState = { ...DEFAULT_TS, tm: [...IDENTITY], tlm: [...IDENTITY] }
@@ -465,26 +516,27 @@ function renderOps(
 
       // ── Text show ────────────────────────────────────────────────────────
       case 'Tj':
-        if (ops.length >= 1) showText(decodePdfString(ops[ops.length - 1].value))
+        if (ops.length >= 1) showText(decodePdfStringWithFont(ops[ops.length - 1].value, curFont()))
         break
       case "'":
         ts.tlm = matMul([1, 0, 0, 1, 0, -ts.leading], ts.tlm)
         ts.tm  = [...ts.tlm]
-        if (ops.length >= 1) showText(decodePdfString(ops[ops.length - 1].value))
+        if (ops.length >= 1) showText(decodePdfStringWithFont(ops[ops.length - 1].value, curFont()))
         break
       case '"':
         if (ops.length >= 3) {
           ts.wordSpacing = asNum(ops[0]); ts.charSpacing = asNum(ops[1])
           ts.tlm = matMul([1, 0, 0, 1, 0, -ts.leading], ts.tlm)
           ts.tm  = [...ts.tlm]
-          showText(decodePdfString(ops[2].value))
+          showText(decodePdfStringWithFont(ops[2].value, curFont()))
         }
         break
       case 'TJ':
         if (ops.length >= 1 && ops[0].type === 'array') {
+          const f = curFont()
           for (const item of parseTJArray(ops[0].value)) {
             if (item.kind === 'str') {
-              showText(item.text)
+              showText(decodePdfStringWithFont(item.raw, f))
             } else {
               // Displacement in 1/1000 text-unit; negative = move right
               const dx = -(item.value / 1000) * ts.fontSize * (ts.hScale / 100)
