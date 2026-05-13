@@ -635,7 +635,7 @@ const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
       .filter(([, f]) => f.font_file_num !== null)
       .map(([name, f]) =>
         fetch(`/api/ttf_raw/${uploadId}/${f.font_file_num}/${f.font_file_gen}`)
-          .then(r => r.ok ? r.arrayBuffer() : Promise.reject())
+          .then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error(`HTTP ${r.status}`)))
           .then(buf => {
             // Use a unique family name to avoid clashing with system fonts
             const family = `PdfFont_${uploadId.slice(0, 8)}_${name}`
@@ -643,9 +643,10 @@ const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
             return face.load().then(loaded => {
               document.fonts.add(loaded)
               loadedFontFamilies.set(name, family)
+              console.debug(`[CsCanvas] embedded font loaded: ${name} → ${family}`)
             })
           })
-          .catch(() => { /* embedded font load failed — fall back to CSS stack */ })
+          .catch(err => { console.warn(`[CsCanvas] font load failed for ${name}:`, err) })
       )
 
     // ── 2. Load images (with SMask compositing) ──────────────────────────

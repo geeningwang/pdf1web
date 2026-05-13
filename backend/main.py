@@ -660,17 +660,37 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                                 elif w.type == PdfObjType.Real: wlist.append(w.dval)
                                 else: wlist.append(0.0)
                             font_meta['widths'] = wlist
-                        # Look for embedded font binary: FontDescriptor → FontFile2/FontFile3/FontFile
-                        fd_ref = font_res.get('FontDescriptor')
-                        if fd_ref.is_ref():
-                            fd_obj = doc.resolve_num(fd_ref.ref.num, fd_ref.ref.gen)
+                        # Look for embedded font binary via FontDescriptor.
+                        # Simple fonts (Type1, TrueType): FontDescriptor is on the font dict directly.
+                        # Type0 (composite) fonts: FontDescriptor is on DescendantFonts[0] (the CIDFont).
+                        def _find_font_file(fdict: 'PdfObject') -> None:
+                            fd = fdict.get('FontDescriptor')
+                            # FontDescriptor may be an indirect ref or an inline dict
+                            fd_obj: 'PdfObject | None' = None
+                            if fd.is_ref():
+                                fd_obj = doc.resolve_num(fd.ref.num, fd.ref.gen)
+                            elif fd.is_dict():
+                                fd_obj = fd
                             if fd_obj is not None and fd_obj.is_dict():
                                 for ff_key in ('FontFile2', 'FontFile3', 'FontFile'):
                                     ff_ref = fd_obj.get(ff_key)
                                     if ff_ref.is_ref():
                                         font_meta['font_file_num'] = ff_ref.ref.num
                                         font_meta['font_file_gen'] = ff_ref.ref.gen
-                                        break
+                                        return
+
+                        _find_font_file(font_res)
+                        # For Type0 fonts, also try DescendantFonts[0]
+                        if font_meta['font_file_num'] is None:
+                            df = font_res.get('DescendantFonts')
+                            if df.is_array() and df.arr:
+                                df0 = df.arr[0]
+                                if df0.is_ref():
+                                    df0_obj = doc.resolve_num(df0.ref.num, df0.ref.gen)
+                                    if df0_obj is not None and df0_obj.is_dict():
+                                        _find_font_file(df0_obj)
+                                elif df0.is_dict():
+                                    _find_font_file(df0)
                     # Resolve /ToUnicode CMap → {char_code: unicode_char}
                     font_meta['cmap'] = None
                     tu_ref = font_res.get('ToUnicode') if font_res is not None else None
