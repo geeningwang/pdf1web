@@ -326,13 +326,6 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                     if not_special and not _is_binary(decoded) and _is_content_stream_data(decoded):
                         is_content_stream = True
 
-    # Detect indexed color palette
-    if obj and obj.type == PdfObjType.Array:
-        if (len(obj.arr) >= 4
-                and obj.arr[0].is_name()
-                and obj.arr[0].sval == "Indexed"):
-            is_palette = True
-
     # Signal 3 — Reference chain detections
     backref_index = _backref_cache.get(upload_id, {})
     for ref in backref_index.get(num, []):
@@ -349,6 +342,12 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
             if (parent and parent.is_array() and len(parent.arr) >= 2
                     and parent.arr[0].is_name() and parent.arr[0].sval == "ICCBased"):
                 is_icc_profile = True
+        # Indexed palette lookup stream: [/Indexed base hival stream_ref] array at [3]
+        if kp == "[3]":
+            parent = doc.resolve_num(ref["from_num"], ref["from_gen"])
+            if (parent and parent.is_array() and len(parent.arr) >= 4
+                    and parent.arr[0].is_name() and parent.arr[0].sval == "Indexed"):
+                is_palette = True
 
     return {
         "detail": detail,
@@ -446,25 +445,41 @@ def get_palette(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     if obj is None:
         raise HTTPException(404, "Object not found")
 
-    # Expect [/Indexed base_cs hival lookup]
-    if obj.type != PdfObjType.Array:
-        raise HTTPException(422, "Not an Indexed color space array")
-    if len(obj.arr) < 4 or not obj.arr[0].is_name() or obj.arr[0].sval != "Indexed":
-        raise HTTPException(422, "Not an Indexed color space array")
-
-    hival = int(obj.arr[2].ival) if obj.arr[2].is_int() else None
-    lookup_ref = obj.arr[3]
-
-    # Resolve the lookup table (stream reference or inline string)
-    if lookup_ref.is_ref():
-        lookup = doc.resolve_num(lookup_ref.ref.num, lookup_ref.ref.gen)
-        if lookup is None:
-            raise HTTPException(404, "Palette lookup stream not found")
-        raw = lookup.stream_raw
-    elif lookup_ref.is_str():
-        raw = lookup_ref.sval.encode("latin-1")
+    # If called with the lookup stream directly (e.g. obj 341), find the parent
+    # [/Indexed base hival lookup_ref] array via the backref index.
+    if not obj.is_array():
+        index = _backref_cache.get(upload_id, {})
+        parent_array = None
+        for ref in index.get(num, []):
+            if ref["key_path"] == "[3]":
+                candidate = doc.resolve_num(ref["from_num"], ref["from_gen"])
+                if (candidate and candidate.is_array() and len(candidate.arr) >= 4
+                        and candidate.arr[0].is_name() and candidate.arr[0].sval == "Indexed"):
+                    parent_array = candidate
+                    break
+        if parent_array is None:
+            raise HTTPException(422, "Not an Indexed color space array")
+        # Use the raw bytes of this stream as the lookup table directly
+        hival = int(parent_array.arr[2].ival) if parent_array.arr[2].is_int() else None
+        raw = obj.stream_raw
     else:
-        raise HTTPException(422, "Unsupported palette lookup format")
+        # Expect [/Indexed base_cs hival lookup]
+        if len(obj.arr) < 4 or not obj.arr[0].is_name() or obj.arr[0].sval != "Indexed":
+            raise HTTPException(422, "Not an Indexed color space array")
+
+        hival = int(obj.arr[2].ival) if obj.arr[2].is_int() else None
+        lookup_ref = obj.arr[3]
+
+        # Resolve the lookup table (stream reference or inline string)
+        if lookup_ref.is_ref():
+            lookup = doc.resolve_num(lookup_ref.ref.num, lookup_ref.ref.gen)
+            if lookup is None:
+                raise HTTPException(404, "Palette lookup stream not found")
+            raw = lookup.stream_raw
+        elif lookup_ref.is_str():
+            raw = lookup_ref.sval.encode("latin-1")
+        else:
+            raise HTTPException(422, "Unsupported palette lookup format")
 
     # Trim to exact entry count using hival if available
     if hival is not None:
