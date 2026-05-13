@@ -11,4 +11,6 @@ __pycache__/
 # Node
 frontend/node_modules/
 
-# Build output (keep dist/ — it's served directly by FastAPI)
+# User data — uploaded/stored PDFs and analysis logs
+backend/uploads/
+backend/store/
