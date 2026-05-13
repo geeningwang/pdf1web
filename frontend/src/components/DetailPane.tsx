@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData, ToUnicodeData, FontDescriptorData, TtfTablesData, BackRefsData } from '../api'
 import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, imageUrl } from '../api'
 import IccPane from './IccPane'
@@ -7,7 +8,7 @@ import ContentStreamPane from './ContentStreamPane'
 import PalettePane from './PalettePane'
 import ToUnicodePane from './ToUnicodePane'
 import FontDescriptorPane from './FontDescriptorPane'
-import TtfTablesPane from './TtfTablesPane'
+import TtfTablesPane, { GlyphGrid } from './TtfTablesPane'
 
 interface Props {
   node: TreeNode | null
@@ -189,73 +190,88 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
         )}
       </div>
 
-      <div className="detail-body">
-        {canShowImage && (
-          <div className="detail-image-section">
-            {imageError
-              ? <div className="detail-error">{imageError}</div>
-              : (
-                <img
-                  src={imageUrl(uploadId!, node.obj_num, node.gen_num)}
-                  alt="XObject image"
-                  className="detail-image"
-                  onError={() =>
-                    setImageError('Image could not be rendered (unsupported pixel format or filter)')
-                  }
-                />
-              )
-            }
-          </div>
-        )}
+      <PanelGroup direction="vertical" autoSaveId="detail-vsplit" className="detail-body">
+        <Panel defaultSize={55} minSize={10} className="detail-viz-panel">
+          <div className="detail-viz-scroll">
+            {/* Glyph grid at the top — same slot as image */}
+            {!canShowImage && ttfData && node && uploadId && (
+              <div className="detail-glyph-top-section">
+                <GlyphGrid uploadId={uploadId} num={node.obj_num} gen={node.gen_num} />
+              </div>
+            )}
 
-        {canShowImage && imageDetail && (
-          <div className="detail-image-meta-section">
-            <ImagePane data={imageDetail} />
-          </div>
-        )}
+            {canShowImage && (
+              <div className="detail-image-section">
+                {imageError
+                  ? <div className="detail-error">{imageError}</div>
+                  : (
+                    <img
+                      src={imageUrl(uploadId!, node.obj_num, node.gen_num)}
+                      alt="XObject image"
+                      className="detail-image"
+                      onError={() =>
+                        setImageError('Image could not be rendered (unsupported pixel format or filter)')
+                      }
+                    />
+                  )
+                }
+              </div>
+            )}
 
-        {!canShowImage && iccData && (
-          <div className="detail-icc-section">
-            <IccPane icc={iccData} />
-          </div>
-        )}
+            {canShowImage && imageDetail && (
+              <div className="detail-image-meta-section">
+                <ImagePane data={imageDetail} />
+              </div>
+            )}
 
-        {!canShowImage && !iccData && contentStreamData && (
-          <div className="detail-cs-section">
-            <ContentStreamPane data={contentStreamData} />
-          </div>
-        )}
+            {!canShowImage && iccData && (
+              <div className="detail-icc-section">
+                <IccPane icc={iccData} />
+              </div>
+            )}
 
-        {!canShowImage && !iccData && !contentStreamData && paletteData && (
-          <div className="detail-palette-section">
-            <PalettePane data={paletteData} />
-          </div>
-        )}
+            {!canShowImage && !iccData && contentStreamData && (
+              <div className="detail-cs-section">
+                <ContentStreamPane data={contentStreamData} />
+              </div>
+            )}
 
-        {!canShowImage && toUnicodeData && (
-          <div className="detail-cmap-section">
-            <ToUnicodePane data={toUnicodeData} onJumpToObj={onJumpToObj} />
-          </div>
-        )}
+            {!canShowImage && !iccData && !contentStreamData && paletteData && (
+              <div className="detail-palette-section">
+                <PalettePane data={paletteData} />
+              </div>
+            )}
 
-        {!canShowImage && fontDescData && (
-          <div className="detail-fd-section">
-            <FontDescriptorPane data={fontDescData} onJumpToObj={onJumpToObj} />
-          </div>
-        )}
+            {!canShowImage && toUnicodeData && (
+              <div className="detail-cmap-section">
+                <ToUnicodePane data={toUnicodeData} onJumpToObj={onJumpToObj} />
+              </div>
+            )}
 
-        {!canShowImage && ttfData && (
-          <div className="detail-ttf-section">
-            <TtfTablesPane data={ttfData} />
-          </div>
-        )}
+            {!canShowImage && fontDescData && (
+              <div className="detail-fd-section">
+                <FontDescriptorPane data={fontDescData} onJumpToObj={onJumpToObj} />
+              </div>
+            )}
 
-        <div className="detail-text-section">
-          {loading && <div className="detail-loading">Loading…</div>}
-          {error && <div className="detail-error">{error}</div>}
-          {!loading && !error && <pre className="detail-text">{renderDetail(detail, onJumpToObj)}</pre>}
-        </div>
-      </div>
+            {!canShowImage && ttfData && (
+              <div className="detail-ttf-section">
+                <TtfTablesPane data={ttfData} />
+              </div>
+            )}
+          </div>
+        </Panel>
+
+        <PanelResizeHandle className="detail-resize-handle" />
+
+        <Panel defaultSize={45} minSize={10} className="detail-dump-panel">
+          <div className="detail-text-section">
+            {loading && <div className="detail-loading">Loading…</div>}
+            {error && <div className="detail-error">{error}</div>}
+            {!loading && !error && <pre className="detail-text">{renderDetail(detail, onJumpToObj)}</pre>}
+          </div>
+        </Panel>
+      </PanelGroup>
     </div>
   )
 }

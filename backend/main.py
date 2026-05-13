@@ -326,7 +326,12 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                     if not_special and not _is_binary(decoded) and _is_content_stream_data(decoded):
                         is_content_stream = True
 
-    # Signal 3 — Reference chain detections
+    # Reference chain detections.
+    # These indices are fixed by the PDF spec:
+    #   [/ICCBased  stream_ref]              → stream is always at [1]
+    #   [/Indexed base_cs hival lookup_ref] → lookup is always at [3]
+    # The parent.arr[0].sval guard prevents false positives even if the
+    # key_path suffix matches by coincidence in an unrelated array.
     backref_index = _backref_cache.get(upload_id, {})
     for ref in backref_index.get(num, []):
         kp, tn = ref["key_path"], ref["type_name"]
@@ -336,13 +341,14 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         # ToUnicode CMap: Font.ToUnicode → stream
         if kp == "ToUnicode" and tn == "Font":
             is_tounicode = True
-        # ICC profile: [/ICCBased stream_ref] array at index [1]
+        # ICC profile: [/ICCBased stream_ref] — stream is always at index [1]
         if kp == "[1]":
             parent = doc.resolve_num(ref["from_num"], ref["from_gen"])
             if (parent and parent.is_array() and len(parent.arr) >= 2
                     and parent.arr[0].is_name() and parent.arr[0].sval == "ICCBased"):
                 is_icc_profile = True
-        # Indexed palette lookup stream: [/Indexed base hival stream_ref] array at [3]
+        # Indexed palette lookup stream: [/Indexed base hival stream_ref]
+        # — lookup reference is always at index [3], fixed by the PDF spec.
         if kp == "[3]":
             parent = doc.resolve_num(ref["from_num"], ref["from_gen"])
             if (parent and parent.is_array() and len(parent.arr) >= 4
@@ -745,6 +751,111 @@ def get_ttf_tables(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "total_size": total_size,
         "tables": tables,
     }
+
+
+def _ensure_ttf_required_tables(data: bytes) -> bytes:
+    """Inject minimal stub tables that opentype.js requires unconditionally.
+
+    Embedded CIDFont subsets often omit the 'name' and 'cmap' tables.
+    opentype.js calls uncompressTable(data, nameTableEntry) and accesses
+    cmap.glyphIndexMap without guarding for their absence, so we add
+    zero-entry stubs when they are missing.
+    """
+    import struct as _s
+    if len(data) < 12:
+        return data
+
+    num_tables = _s.unpack_from(">H", data, 4)[0]
+    existing = set()
+    for i in range(num_tables):
+        off = 12 + i * 16
+        existing.add(data[off:off + 4])
+
+    stubs: list[tuple[bytes, bytes]] = []
+
+    # Minimal name table: format=0, count=0, stringOffset=6 (6 bytes)
+    if b"name" not in existing:
+        stubs.append((b"name", b"\x00\x00\x00\x00\x00\x06"))
+
+    # Minimal cmap table: format-4 subtable with just the terminator segment
+    # Header (4 B) + 1 encoding record (8 B) + format-4 subtable (24 B) = 36 bytes
+    if b"cmap" not in existing:
+        cmap_subtable = _s.pack(">HHHHHHHHHHHH",
+            4,       # format
+            24,      # length of subtable
+            0,       # language
+            2,       # segCountX2 (1 segment)
+            2,       # searchRange
+            0,       # entrySelector
+            0,       # rangeShift
+            0xFFFF,  # endCode[0]  — terminator segment
+            0,       # reservedPad
+            0xFFFF,  # startCode[0]
+            1,       # idDelta[0]  — maps to glyph 0 (.notdef)
+            0,       # idRangeOffset[0]
+        )
+        cmap_header = _s.pack(">HHHHI", 0, 1, 3, 1, 12)  # ver, numTables, winPlatID, unicodeBMP, offset
+        stubs.append((b"cmap", cmap_header + cmap_subtable))
+
+    # Minimal post table version 3.0 (no glyph name array).
+    # opentype.js constructs GlyphNames(font.tables.post) and then accesses
+    # font.glyphNames.names without guarding for a missing post table.
+    if b"post" not in existing:
+        stubs.append((b"post", _s.pack(">IIhhIIIII",
+            0x00030000, 0, 0, 0, 0, 0, 0, 0, 0)))
+
+    if not stubs:
+        return data
+
+    # Each stub adds one directory entry (16 B), shifting all existing offsets.
+    shift = len(stubs) * 16
+    new_num = num_tables + len(stubs)
+
+    p = 1
+    while p * 2 <= new_num:
+        p *= 2
+    search_range   = p * 16
+    entry_selector = p.bit_length() - 1
+    range_shift    = new_num * 16 - search_range
+
+    # Shift existing table offsets
+    dir_entries: list[tuple[bytes, int, int, int]] = []
+    for i in range(num_tables):
+        off = 12 + i * 16
+        tag, chk, tbl_off, tbl_len = _s.unpack_from(">4sIII", data, off)
+        dir_entries.append((tag, chk, tbl_off + shift, tbl_len))
+
+    # Append stubs at the end, computing their checksum
+    append_offset = len(data) + shift
+    for tag_b, stub_bytes in stubs:
+        padded = stub_bytes + b"\x00" * ((4 - len(stub_bytes) % 4) % 4)
+        chk = sum(_s.unpack_from(">I", padded, j)[0] for j in range(0, len(padded), 4)) & 0xFFFFFFFF
+        dir_entries.append((tag_b, chk, append_offset, len(stub_bytes)))
+        append_offset += len(stub_bytes)
+
+    dir_entries.sort(key=lambda e: e[0])
+
+    header    = _s.pack(">4sHHHH", data[:4], new_num, search_range, entry_selector, range_shift)
+    directory = b"".join(_s.pack(">4sIII", tag, chk, off, ln) for tag, chk, off, ln in dir_entries)
+    old_data_start = 12 + num_tables * 16
+    stub_data = b"".join(b for _, b in stubs)
+    return header + directory + data[old_data_start:] + stub_data
+
+
+@app.get("/api/ttf_raw/{upload_id}/{num}/{gen}")
+def get_ttf_raw(upload_id: str, num: int, gen: int) -> Response:
+    """Return the decoded TrueType/OTF font bytes for client-side rendering."""
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+    obj = doc.resolve_num(num, gen)
+    if obj is None or obj.type != PdfObjType.Stream:
+        raise HTTPException(404, "Object not found or not a stream")
+    data = _decode_stream(obj)
+    if data is None:
+        raise HTTPException(422, "Cannot decode font stream")
+    data = _ensure_ttf_required_tables(data)
+    return Response(content=data, media_type="application/octet-stream")
 
 
 @app.get("/api/image_detail/{upload_id}/{num}/{gen}")

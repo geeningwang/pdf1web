@@ -445,20 +445,52 @@ html, body, #root {
   color: var(--text);
 }
 
-/* Body below the header: vertical stack of image section + text section */
+/* Body below the header: split by react-resizable-panels */
 .detail-body {
   flex: 1;
+  overflow: hidden;
+}
+
+/* Top panel: scrollable visualization area */
+.detail-viz-panel {
+  overflow: hidden;
+}
+.detail-viz-scroll {
+  height: 100%;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
+}
+
+/* Bottom panel: raw object dump */
+.detail-dump-panel {
   overflow: hidden;
+}
+
+/* Draggable resize handle between viz and dump */
+.detail-resize-handle {
+  height: 5px;
+  background: var(--border);
+  cursor: row-resize;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.detail-resize-handle:hover,
+.detail-resize-handle[data-resize-handle-active] {
+  background: var(--accent, #58a6ff);
+}
+
+/* Glyph grid top section — styled like the image section */
+.detail-glyph-top-section {
+  flex: 0 0 auto;
+  overflow: auto;
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
 }
 
 /* Image section — shown only for image nodes, takes up to 45% of body */
 .detail-image-section {
   flex: 0 0 auto;
-  max-height: 45%;
-  min-height: 80px;
-  overflow: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -470,17 +502,13 @@ html, body, #root {
 /* ICC profile section — same slot as image section */
 .detail-icc-section {
   flex: 0 0 auto;
-  max-height: 55%;
-  overflow: auto;
   border-bottom: 1px solid var(--border);
   background: var(--bg2);
 }
 
-/* Content stream section — scrollable, shares space with text pane */
+/* Content stream section */
 .detail-cs-section {
-  flex: 1 1 50%;
-  min-height: 120px;
-  overflow: auto;
+  flex: 0 0 auto;
   border-bottom: 1px solid var(--border);
   background: var(--bg2);
 }
@@ -488,7 +516,6 @@ html, body, #root {
 /* Palette section */
 .detail-palette-section {
   flex: 0 0 auto;
-  overflow: auto;
   border-bottom: 1px solid var(--border);
   background: var(--bg2);
 }
@@ -754,8 +781,6 @@ html, body, #root {
 /* Section slot — sits between the image preview and the text pane */
 .detail-image-meta-section {
   flex: 0 0 auto;
-  max-height: 45%;
-  overflow: auto;
   border-bottom: 1px solid var(--border);
   background: var(--bg2);
 }
@@ -1136,7 +1161,7 @@ html, body, #root {
 .cmap-search:focus { outline: none; border-color: var(--accent); }
 .cmap-search-count { font-size: 11px; color: var(--text-dim); }
 
-.cmap-table-wrap { overflow: auto; padding: 0 12px 8px; max-height: 420px; }
+.cmap-table-wrap { overflow: visible; padding: 0 12px 8px; }
 .cmap-table {
   border-collapse: collapse; font-size: 12px; width: 100%;
 }
@@ -1284,7 +1309,7 @@ html, body, #root {
 }
 
 /* Table */
-.ttf-table-wrap { overflow: auto; padding: 0 12px 8px; max-height: 380px; }
+.ttf-table-wrap { overflow: visible; padding: 0 12px 8px; }
 .ttf-table { border-collapse: collapse; font-size: 12px; width: 100%; }
 .ttf-table th {
   position: sticky; top: 0; background: var(--bg2);
@@ -1309,6 +1334,32 @@ html, body, #root {
 .ttf-mono { font-family: monospace; font-size: 11px; color: var(--text-dim); }
 .ttf-checksum { opacity: 0.6; }
 .ttf-desc { font-size: 11px; color: var(--text-dim); }
+
+/* Glyph grid */
+.ttf-glyph-section { padding: 10px 14px; }
+.ttf-glyph-toolbar {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;
+}
+.ttf-glyph-count { font-size: 11px; color: var(--text-dim); }
+.ttf-glyph-toggle { font-size: 11px; color: var(--text-dim); cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.ttf-glyph-search {
+  font-size: 11px; padding: 2px 6px; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--bg-input, #1a1a1a); color: var(--text); width: 160px;
+}
+.ttf-glyph-grid {
+  display: flex; flex-wrap: wrap; gap: 4px;
+}
+.ttf-glyph-cell {
+  display: flex; flex-direction: column; align-items: center;
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 2px; cursor: default; background: var(--bg-row, #161616);
+  color: var(--text);
+}
+.ttf-glyph-cell:hover { border-color: var(--accent, #58a6ff); background: var(--bg-hover, #1f2937); }
+.ttf-glyph-empty { opacity: 0.25; }
+.ttf-glyph-label { font-size: 9px; color: var(--text-dim); line-height: 1; }
+.ttf-glyph-loading, .ttf-glyph-err { padding: 12px 14px; font-size: 12px; color: var(--text-dim); }
+.ttf-glyph-err { color: #f87171; }
 
 /* Section headings for detail-body */
 .detail-cmap-section,

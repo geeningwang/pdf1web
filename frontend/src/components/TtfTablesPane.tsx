@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+import * as opentype from 'opentype.js'
 import type { TtfTablesData, TtfTable } from '../api'
 
 function fmtBytes(n: number): string {
@@ -73,6 +75,102 @@ interface Props {
   data: TtfTablesData
 }
 
+// --- Glyph grid (exported so DetailPane can place it at top) ---
+
+const CELL = 64   // cell size in px
+const PAD  = 6    // padding inside the cell
+
+interface GlyphCell {
+  index: number
+  name: string
+  svgPath: string
+  viewBox: string
+  isEmpty: boolean
+}
+
+function buildGlyphCells(font: opentype.Font, limit: number): GlyphCell[] {
+  const cells: GlyphCell[] = []
+  const count = Math.min(font.glyphs.length, limit)
+  for (let i = 0; i < count; i++) {
+    const glyph = font.glyphs.get(i)
+    const upm = font.unitsPerEm
+    const ascender = font.ascender
+    // canvas coords: origin at top-left, baseline at ascender fraction
+    const scale = (CELL - PAD * 2) / upm
+    const ox = PAD
+    const oy = PAD + ascender * scale
+    const path = glyph.getPath(ox, oy, (CELL - PAD * 2))
+    const svgPath = path.toSVG(2)
+    // extract just the d= attribute value
+    const dMatch = svgPath.match(/d="([^"]*)"/)
+    cells.push({
+      index: i,
+      name: glyph.name || `gid${i}`,
+      svgPath: dMatch ? dMatch[1] : '',
+      viewBox: `0 0 ${CELL} ${CELL}`,
+      isEmpty: !dMatch || dMatch[1].trim() === '',
+    })
+  }
+  return cells
+}
+
+export function GlyphGrid({ uploadId, num, gen }: { uploadId: string; num: number; gen: number }) {
+  const [cells, setCells] = useState<GlyphCell[] | null>(null)
+  const [total, setTotal] = useState(0)
+  const [err, setErr] = useState<string | null>(null)
+  const [showEmpty, setShowEmpty] = useState(false)
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    setCells(null); setErr(null)
+    fetch(`/api/ttf_raw/${uploadId}/${num}/${gen}`)
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer() })
+      .then(buf => {
+        const font = opentype.parse(buf)
+        setTotal(font.glyphs.length)
+        setCells(buildGlyphCells(font, font.glyphs.length))
+      })
+      .catch(e => setErr(String(e)))
+  }, [uploadId, num, gen])
+
+  if (err) return <div className="ttf-glyph-err">Failed to load font: {err}</div>
+  if (!cells) return <div className="ttf-glyph-loading">Loading glyphs…</div>
+
+  const filtered = cells.filter(c => {
+    if (!showEmpty && c.isEmpty) return false
+    if (search) return c.name.toLowerCase().includes(search.toLowerCase()) || String(c.index).includes(search)
+    return true
+  })
+
+  return (
+    <div className="ttf-glyph-section">
+      <div className="ttf-glyph-toolbar">
+        <span className="ttf-glyph-count">{total} glyphs total · {filtered.length} shown</span>
+        <label className="ttf-glyph-toggle">
+          <input type="checkbox" checked={showEmpty} onChange={e => setShowEmpty(e.target.checked)} />
+          {' '}show empty
+        </label>
+        <input
+          className="ttf-glyph-search"
+          placeholder="filter by name or index…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+      </div>
+      <div className="ttf-glyph-grid">
+        {filtered.map(c => (
+          <div key={c.index} className={`ttf-glyph-cell${c.isEmpty ? ' ttf-glyph-empty' : ''}`} title={`#${c.index} ${c.name}`}>
+            <svg viewBox={c.viewBox} width={CELL} height={CELL}>
+              {c.svgPath && <path d={c.svgPath} fill="currentColor" />}
+            </svg>
+            <span className="ttf-glyph-label">{c.index}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function TtfTablesPane({ data }: Props) {
   return (
     <div className="ttf-pane">
@@ -115,6 +213,7 @@ export default function TtfTablesPane({ data }: Props) {
           </tbody>
         </table>
       </div>
+
     </div>
   )
 }
