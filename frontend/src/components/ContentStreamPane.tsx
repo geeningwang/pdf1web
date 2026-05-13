@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useState } from 'react'
 import type { ContentStreamData, ContentStreamStructSeg } from '../api'
+import CsCanvasRenderer from './CsCanvasRenderer'
 
 // ------------------------------------------------------------------ legend config
 
@@ -80,11 +81,16 @@ function CategorySummary({ counts }: { counts: Record<string, number> }) {
 
 interface Props {
   data: ContentStreamData
+  uploadId?: string
 }
 
-const ContentStreamPane: React.FC<Props> = ({ data }) => {
+const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
   const displayed = data.operations
   const hiddenCount = 0
+  const canRender = !!uploadId && !!data.media_box
+
+  // default on if media_box is available
+  const [showCanvas, setShowCanvas] = useState(canRender)
 
   return (
     <div className="cs-pane">
@@ -95,7 +101,21 @@ const ContentStreamPane: React.FC<Props> = ({ data }) => {
           · {data.total_ops.toLocaleString()} operator{data.total_ops !== 1 ? 's' : ''}
           {data.truncated ? ` (parsed first ${data.operations.length.toLocaleString()})` : ''}
         </span>
+        {canRender && (
+          <button
+            className={`cs-render-toggle${showCanvas ? ' active' : ''}`}
+            onClick={() => setShowCanvas(v => !v)}
+            title="Toggle front-end canvas renderer"
+          >
+            {showCanvas ? 'Hide render' : 'Show render'}
+          </button>
+        )}
       </div>
+
+      {/* Canvas renderer */}
+      {canRender && showCanvas && (
+        <CsCanvasRenderer data={data} uploadId={uploadId!} />
+      )}
 
       {/* Structure bar */}
       {data.structure.length > 0 && (

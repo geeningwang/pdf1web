@@ -518,6 +518,78 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     if result is None:
         raise HTTPException(422, "Not a valid content stream")
 
+    # ── Resolve page resources & media box for front-end canvas rendering ──────
+    def _num_val(v: Any) -> float | None:
+        if v.is_int(): return float(v.ival)
+        if v.type == PdfObjType.Real: return v.dval
+        return None
+
+    def _resolve_res_dict(ref_obj: Any) -> Any:
+        """Dereference a resource dict value (may be an indirect ref or inline dict)."""
+        if ref_obj.is_ref():
+            return doc.resolve_num(ref_obj.ref.num, ref_obj.ref.gen)
+        if ref_obj.is_dict():
+            return ref_obj
+        return None
+
+    resources: dict[str, Any] = {'xobject': {}, 'font': {}}
+    media_box: list[float] | None = None
+
+    # Check the stream object itself for BBox / Resources (handles Form XObjects too)
+    bbox_val = obj.get('BBox')
+    if bbox_val.is_array() and len(bbox_val.arr) >= 4:
+        nums_b = [_num_val(v) for v in bbox_val.arr[:4]]
+        if all(nb is not None for nb in nums_b):
+            media_box = nums_b  # type: ignore[assignment]
+
+    stream_res_obj = _resolve_res_dict(obj.get('Resources'))
+
+    # Also look for an owning Page via the backref cache
+    backref_index = _backref_cache.get(upload_id, {})
+    page_obj: Any = None
+    for ref in backref_index.get(num, []):
+        kp = ref['key_path']
+        if kp == 'Contents' or kp.startswith('Contents.'):
+            candidate = doc.resolve_num(ref['from_num'], ref['from_gen'])
+            if candidate is not None:
+                tp = candidate.get('Type')
+                if tp.is_name() and tp.sval == 'Page':
+                    page_obj = candidate
+                    break
+
+    if page_obj is not None and media_box is None:
+        mb = page_obj.get('MediaBox')
+        if mb.is_array() and len(mb.arr) >= 4:
+            nums_m = [_num_val(v) for v in mb.arr[:4]]
+            if all(nm is not None for nm in nums_m):
+                media_box = nums_m  # type: ignore[assignment]
+
+    # Collect resources from page (lower priority) then stream (higher priority)
+    for res_obj in [_resolve_res_dict(page_obj.get('Resources')) if page_obj else None,
+                    stream_res_obj]:
+        if res_obj is None:
+            continue
+        xobj_obj = _resolve_res_dict(res_obj.get('XObject'))
+        if xobj_obj is not None and xobj_obj.is_dict():
+            for name, val in xobj_obj.dict.items():
+                if val.is_ref():
+                    xobj_resolved = doc.resolve_num(val.ref.num, val.ref.gen)
+                    if xobj_resolved is not None:
+                        subtype_obj = xobj_resolved.get('Subtype')
+                        subtype = subtype_obj.sval if subtype_obj.is_name() else 'Unknown'
+                        resources['xobject'][name] = {
+                            'num': val.ref.num,
+                            'gen': val.ref.gen,
+                            'subtype': subtype,
+                        }
+        font_obj = _resolve_res_dict(res_obj.get('Font'))
+        if font_obj is not None and font_obj.is_dict():
+            for name, val in font_obj.dict.items():
+                if val.is_ref():
+                    resources['font'][name] = {'num': val.ref.num, 'gen': val.ref.gen}
+
+    result['resources'] = resources
+    result['media_box'] = media_box
     return result
 
 

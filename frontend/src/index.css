@@ -959,6 +959,51 @@ html, body, #root {
 .cs-title { font-size: 12px; font-weight: 600; color: var(--text); }
 .cs-subtitle { font-size: 11px; color: var(--text-dim); }
 
+.cs-render-toggle {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text-dim);
+  cursor: pointer;
+  line-height: 1.6;
+}
+.cs-render-toggle:hover { color: var(--text); border-color: var(--text-dim); }
+.cs-render-toggle.active { background: var(--accent, #0078d4); color: #fff; border-color: transparent; }
+
+/* Canvas renderer */
+.cs-render-wrap {
+  position: relative;
+  margin: 0 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: white;
+}
+.cs-render-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.cs-render-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: rgba(255,255,255,0.7);
+  pointer-events: none;
+}
+.cs-render-error {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--error, #c00);
+}
+
 /* Structure bar */
 .cs-struct-bar {
   display: flex;

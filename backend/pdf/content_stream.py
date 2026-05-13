@@ -367,6 +367,7 @@ def parse_content_stream(data: bytes) -> dict | None:
                     'color': _CAT_COLOR[cat],
                     'desc': desc,
                     'summary': '',
+                    'operands': [],
                 })
                 operands = []
                 skip_to_ei = False
@@ -380,6 +381,7 @@ def parse_content_stream(data: bytes) -> dict | None:
                 'color': _CAT_COLOR.get(cat, 'unknown'),
                 'desc': desc,
                 'summary': _operand_summary(tval, operands),
+                'operands': [{'type': t, 'value': v} for t, v in operands],
             })
             operands = []
             if tval == 'ID':

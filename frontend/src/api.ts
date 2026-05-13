@@ -241,12 +241,18 @@ export async function fetchImageDetail(
   return res.json()
 }
 
+export interface CsOperand {
+  type: 'num' | 'name' | 'string' | 'array' | 'dict_val'
+  value: string
+}
+
 export interface ContentStreamOp {
   op: string
   category: string
   color: string
   desc: string
   summary: string
+  operands: CsOperand[]
 }
 
 export interface ContentStreamStructSeg {
@@ -262,6 +268,11 @@ export interface ContentStreamData {
   truncated: boolean
   structure: ContentStreamStructSeg[]
   category_counts: Record<string, number>
+  resources?: {
+    xobject: Record<string, { num: number; gen: number; subtype: string }>
+    font: Record<string, { num: number; gen: number }>
+  }
+  media_box?: [number, number, number, number] | null
 }
 
 export async function fetchContentStream(
