@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData, ToUnicodeData, FontDescriptorData, TtfTablesData, BackRefsData } from '../api'
-import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, imageUrl } from '../api'
+import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData, ToUnicodeData, FontDescriptorData, TtfTablesData, BackRefsData, CidToGidData } from '../api'
+import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, fetchCidToGid, imageUrl } from '../api'
 import IccPane from './IccPane'
 import ImagePane from './ImagePane'
 import ContentStreamPane from './ContentStreamPane'
@@ -9,6 +9,7 @@ import PalettePane from './PalettePane'
 import ToUnicodePane from './ToUnicodePane'
 import FontDescriptorPane from './FontDescriptorPane'
 import TtfTablesPane, { GlyphGrid } from './TtfTablesPane'
+import CidToGidPane from './CidToGidPane'
 
 interface Props {
   node: TreeNode | null
@@ -58,6 +59,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
   const [toUnicodeData, setToUnicodeData] = useState<ToUnicodeData | null>(null)
   const [fontDescData, setFontDescData] = useState<FontDescriptorData | null>(null)
   const [ttfData, setTtfData] = useState<TtfTablesData | null>(null)
+  const [cidToGidData, setCidToGidData] = useState<CidToGidData | null>(null)
   const [backRefs, setBackRefs] = useState<BackRefsData | null>(null)
 
   useEffect(() => {
@@ -79,6 +81,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
     setToUnicodeData(null)
     setFontDescData(null)
     setTtfData(null)
+    setCidToGidData(null)
     setBackRefs(null)
     setError(null)
 
@@ -129,6 +132,10 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
         if (resp.is_ttf) {
           fetchTtfTables(uploadId, node.obj_num, node.gen_num)
             .then(d => setTtfData(d))
+        }
+        if (resp.is_cid_to_gid_map) {
+          fetchCidToGid(uploadId, node.obj_num, node.gen_num)
+            .then(d => setCidToGidData(d))
         }
         // Always fetch back-references for any real object
         fetchBackRefs(uploadId, node.obj_num)
@@ -257,6 +264,12 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
             {!canShowImage && ttfData && (
               <div className="detail-ttf-section">
                 <TtfTablesPane data={ttfData} />
+              </div>
+            )}
+
+            {!canShowImage && cidToGidData && (
+              <div className="detail-ctg-section">
+                <CidToGidPane data={cidToGidData} />
               </div>
             )}
           </div>

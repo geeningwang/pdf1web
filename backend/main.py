@@ -305,6 +305,7 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     is_tounicode = False
     is_font_descriptor = False
     is_ttf = False
+    is_cid_to_gid_map = False
     image_filter: str | None = None
     if obj and (obj.is_dict() or obj.type == PdfObjType.Stream):
         st = obj.get("Subtype")
@@ -341,6 +342,9 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         # ToUnicode CMap: Font.ToUnicode → stream
         if kp == "ToUnicode" and tn == "Font":
             is_tounicode = True
+        # CIDToGIDMap: CIDFontType2.CIDToGIDMap → stream
+        if kp == "CIDToGIDMap" and tn == "Font":
+            is_cid_to_gid_map = True
         # ICC profile: [/ICCBased stream_ref] — stream is always at index [1]
         if kp == "[1]":
             parent = doc.resolve_num(ref["from_num"], ref["from_gen"])
@@ -364,9 +368,49 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "is_tounicode": is_tounicode,
         "is_font_descriptor": is_font_descriptor,
         "is_ttf": is_ttf,
+        "is_cid_to_gid_map": is_cid_to_gid_map,
         "image_filter": image_filter,
         "obj_num": num,
         "gen_num": gen,
+    }
+
+
+@app.get("/api/cid_to_gid/{upload_id}/{num}/{gen}")
+def get_cid_to_gid(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Parse a CIDToGIDMap stream and return the CID→GID mapping table."""
+    import struct as _s
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+    obj = doc.resolve_num(num, gen)
+    if obj is None or obj.type != PdfObjType.Stream:
+        raise HTTPException(404, "Object not found or not a stream")
+
+    raw = _decode_stream(obj)
+    if raw is None:
+        raise HTTPException(422, "Cannot decode stream")
+
+    total_cids = len(raw) // 2
+    entries = []
+    for cid in range(total_cids):
+        gid = _s.unpack_from(">H", raw, cid * 2)[0]
+        if gid != 0:
+            entries.append({"cid": cid, "gid": gid})
+
+    # Build a compact coverage bitmap: 1 bit per CID slot, packed into hex string
+    # so the frontend can render a heatmap without sending 19k rows individually.
+    # Each byte covers 8 consecutive CIDs (MSB = lowest CID index).
+    bmp_bytes = bytearray((total_cids + 7) // 8)
+    for e in entries:
+        cid = e["cid"]
+        bmp_bytes[cid >> 3] |= 0x80 >> (cid & 7)
+    coverage_hex = bmp_bytes.hex()
+
+    return {
+        "total_cids": total_cids,
+        "mapped_count": len(entries),
+        "entries": entries[:5000],  # cap to avoid huge payloads
+        "coverage_hex": coverage_hex,
     }
 
 

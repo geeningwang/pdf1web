@@ -27,6 +27,7 @@ export interface ObjectDetailResponse {
   is_tounicode: boolean
   is_font_descriptor: boolean
   is_ttf: boolean
+  is_cid_to_gid_map: boolean
   image_filter: string | null
   obj_num: number
   gen_num: number
@@ -453,6 +454,32 @@ export async function fetchBackRefs(
   num: number,
 ): Promise<BackRefsData | null> {
   const res = await fetch(`${BASE}/backrefs/${uploadId}/${num}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+/* -----------------------------------------------------------------------
+   CIDToGIDMap API
+   ----------------------------------------------------------------------- */
+
+export interface CidToGidEntry {
+  cid: number
+  gid: number
+}
+
+export interface CidToGidData {
+  total_cids: number
+  mapped_count: number
+  entries: CidToGidEntry[]
+  coverage_hex: string  // packed bitmap, 1 bit per CID
+}
+
+export async function fetchCidToGid(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<CidToGidData | null> {
+  const res = await fetch(`${BASE}/cid_to_gid/${uploadId}/${num}/${gen}`)
   if (!res.ok) return null
   return res.json()
 }

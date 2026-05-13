@@ -454,9 +454,12 @@ html, body, #root {
 /* Top panel: scrollable visualization area */
 .detail-viz-panel {
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .detail-viz-scroll {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -465,6 +468,8 @@ html, body, #root {
 /* Bottom panel: raw object dump */
 .detail-dump-panel {
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Draggable resize handle between viz and dump */
@@ -1364,7 +1369,48 @@ html, body, #root {
 /* Section headings for detail-body */
 .detail-cmap-section,
 .detail-fd-section,
-.detail-ttf-section {
+.detail-ttf-section,
+.detail-ctg-section {
   border-bottom: 1px solid var(--border);
 }
 
+/* ---- CIDToGIDMap pane ---- */
+.ctg-pane { padding: 10px 14px; font-size: 12px; color: var(--text); }
+
+.ctg-header { margin-bottom: 8px; }
+.ctg-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.ctg-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
+.ctg-meta-item b { color: var(--text); }
+
+/* Coverage heatmap */
+.ctg-heatmap-wrap { margin-bottom: 8px; }
+.ctg-heatmap-svg { border: 1px solid var(--border); border-radius: 3px; }
+.ctg-heatmap-legend { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+.ctg-legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+.ctg-dot-mapped { background: var(--accent, #58a6ff); }
+.ctg-dot-empty { background: var(--bg3, #1a1a1a); border: 1px solid var(--border); }
+.ctg-dot-void { background: var(--ctg-void, #111); border: 1px solid var(--border); }
+
+/* Table */
+.ctg-table-section { margin-top: 4px; }
+.ctg-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.ctg-search {
+  font-size: 11px; padding: 2px 6px; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--bg-input, #1a1a1a); color: var(--text); width: 180px;
+}
+.ctg-page-info { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
+.ctg-page-btn {
+  background: none; border: 1px solid var(--border); border-radius: 3px;
+  color: var(--text); cursor: pointer; padding: 0 5px; font-size: 12px; line-height: 1.4;
+}
+.ctg-page-btn:disabled { opacity: 0.3; cursor: default; }
+.ctg-table { border-collapse: collapse; font-size: 12px; width: auto; }
+.ctg-table th {
+  text-align: left; padding: 3px 14px 3px 4px; color: var(--text-dim);
+  border-bottom: 1px solid var(--border); font-weight: 500;
+}
+.ctg-table td { padding: 2px 14px 2px 4px; border-bottom: 1px solid var(--border-faint, #222); }
+.ctg-table tr:hover td { background: var(--bg-hover, #1f2937); }
+.ctg-mono { font-family: var(--font-mono); }
+.ctg-dim { color: var(--text-dim); }
+.ctg-empty { padding: 8px 4px; color: var(--text-dim); font-size: 11px; }
