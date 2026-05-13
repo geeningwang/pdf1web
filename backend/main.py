@@ -39,6 +39,8 @@ app.add_middleware(
 
 # In-memory session store: upload_id -> PdfDocument
 _sessions: dict[str, PdfDocument] = {}
+# Reverse-reference cache: upload_id -> {obj_num -> [{from_num, from_gen, key_path, type_name}]}
+_backref_cache: dict[str, dict[int, list[dict]]] = {}
 _MAX_SESSIONS = 20  # evict oldest if exceeded
 
 # Directory where uploaded PDFs and their analysis logs are persisted
@@ -61,6 +63,53 @@ def _evict_if_needed() -> None:
     if len(_sessions) >= _MAX_SESSIONS:
         oldest = next(iter(_sessions))
         del _sessions[oldest]
+        _backref_cache.pop(oldest, None)
+
+
+def _build_backref_index(doc: PdfDocument) -> dict[int, list[dict]]:
+    """Build a full reverse-reference index for a parsed document."""
+    from pdf.xref import XrefEntryType
+    index: dict[int, list[dict]] = {}
+
+    for num, entry in doc._xref.entries.items():
+        if entry.etype == XrefEntryType.Free:
+            continue
+        obj = doc.resolve_num(num, entry.gen)
+        if obj is None:
+            continue
+        # Get the Type name of the referencing object for display
+        type_v = obj.get("Type") if (obj.is_dict() or obj.type == PdfObjType.Stream) else None
+        type_name = type_v.sval if (type_v and type_v.is_name()) else obj.type.name
+
+        # BFS through dict / array values to find all outgoing references
+        pending: list[tuple[Any, list[str]]] = []
+        if obj.is_dict() or obj.type == PdfObjType.Stream:
+            for key, val in obj.dict.items():
+                pending.append((val, [key]))
+        elif obj.is_array():
+            for i, val in enumerate(obj.arr):
+                pending.append((val, [f"[{i}]"]))
+
+        while pending:
+            cur, cur_path = pending.pop()
+            if cur.type == PdfObjType.Reference:
+                tgt = cur.ref.num
+                if tgt not in index:
+                    index[tgt] = []
+                index[tgt].append({
+                    "from_num": num,
+                    "from_gen": entry.gen,
+                    "key_path": ".".join(cur_path),
+                    "type_name": type_name,
+                })
+            elif cur.is_dict() or cur.type == PdfObjType.Stream:
+                for k, v in cur.dict.items():
+                    pending.append((v, cur_path + [k]))
+            elif cur.is_array():
+                for i, v in enumerate(cur.arr):
+                    pending.append((v, cur_path + [f"[{i}]"]))
+
+    return index
 
 
 def _save_upload(upload_id: str, filename: str, data: bytes, doc: PdfDocument) -> None:
@@ -149,6 +198,7 @@ async def upload_pdf(file: UploadFile = File(...)) -> dict[str, Any]:
     upload_id = _make_id()
     _evict_if_needed()
     _sessions[upload_id] = doc
+    _backref_cache[upload_id] = _build_backref_index(doc)
 
     try:
         _save_upload(upload_id, file.filename, data, doc)
@@ -223,6 +273,7 @@ def open_from_store(filename: str) -> dict[str, Any]:
     upload_id = _make_id()
     _evict_if_needed()
     _sessions[upload_id] = doc
+    _backref_cache[upload_id] = _build_backref_index(doc)
 
     try:
         _save_upload(upload_id, safe_name, data, doc)
@@ -251,10 +302,17 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     is_icc_profile = False
     is_content_stream = False
     is_palette = False
+    is_tounicode = False
+    is_font_descriptor = False
+    is_ttf = False
     image_filter: str | None = None
     if obj and (obj.is_dict() or obj.type == PdfObjType.Stream):
         st = obj.get("Subtype")
         is_image = st.is_name() and st.sval == "Image"
+        # FontDescriptor dict
+        type_obj2 = obj.get("Type")
+        if type_obj2.is_name() and type_obj2.sval == "FontDescriptor":
+            is_font_descriptor = True
         if obj.type == PdfObjType.Stream:
             from pdf.filters import flat_decode
             fobj = obj.get("Filter")
@@ -262,25 +320,35 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                 image_filter = fobj.sval if is_image else None
             if fobj.is_name() and fobj.sval == "FlateDecode":
                 decoded = flat_decode(obj.stream_raw)
-                if decoded and len(decoded) >= 40 and decoded[36:40] == b'acsp':
-                    is_icc_profile = True
-                if decoded and not is_icc_profile and not is_image:
+                if decoded and not is_image:
                     type_obj = obj.get("Type")
                     not_special = not (type_obj.is_name() and type_obj.sval in ('ObjStm', 'XRef'))
                     if not_special and not _is_binary(decoded) and _is_content_stream_data(decoded):
                         is_content_stream = True
-            # Detect indexed color palette: check if this object is referenced as
-            # an Indexed CS lookup stream elsewhere in the document (reliable).
-            if not is_image and not is_icc_profile and not is_content_stream:
-                if obj.type == PdfObjType.Stream and doc.is_palette_lookup(num):
-                    pass  # leave as plain stream — palette shown on the array parent
 
-    # Detect Indexed color space array: [/Indexed base_cs hival lookup]
+    # Detect indexed color palette
     if obj and obj.type == PdfObjType.Array:
         if (len(obj.arr) >= 4
                 and obj.arr[0].is_name()
                 and obj.arr[0].sval == "Indexed"):
             is_palette = True
+
+    # Signal 3 — Reference chain detections
+    backref_index = _backref_cache.get(upload_id, {})
+    for ref in backref_index.get(num, []):
+        kp, tn = ref["key_path"], ref["type_name"]
+        # TrueType/OTF font file: FontDescriptor.FontFile2 → stream
+        if kp == "FontFile2" and tn == "FontDescriptor":
+            is_ttf = True
+        # ToUnicode CMap: Font.ToUnicode → stream
+        if kp == "ToUnicode" and tn == "Font":
+            is_tounicode = True
+        # ICC profile: [/ICCBased stream_ref] array at index [1]
+        if kp == "[1]":
+            parent = doc.resolve_num(ref["from_num"], ref["from_gen"])
+            if (parent and parent.is_array() and len(parent.arr) >= 2
+                    and parent.arr[0].is_name() and parent.arr[0].sval == "ICCBased"):
+                is_icc_profile = True
 
     return {
         "detail": detail,
@@ -288,10 +356,23 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "is_icc_profile": is_icc_profile,
         "is_content_stream": is_content_stream,
         "is_palette": is_palette,
+        "is_tounicode": is_tounicode,
+        "is_font_descriptor": is_font_descriptor,
+        "is_ttf": is_ttf,
         "image_filter": image_filter,
         "obj_num": num,
         "gen_num": gen,
     }
+
+
+@app.get("/api/backrefs/{upload_id}/{num}")
+def get_backrefs(upload_id: str, num: int) -> dict[str, Any]:
+    """Return all objects that contain a reference to the given object number."""
+    if upload_id not in _sessions:
+        raise HTTPException(404, "Session not found — please re-upload the PDF")
+    index = _backref_cache.get(upload_id, {})
+    refs = index.get(num, [])
+    return {"obj_num": num, "refs": refs}
 
 
 @app.get("/api/icc/{upload_id}/{num}/{gen}")
@@ -413,13 +494,250 @@ def get_palette(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# ToUnicode CMap endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/tounicode/{upload_id}/{num}/{gen}")
+def get_tounicode(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Parse a ToUnicode CMap stream and return the CID→Unicode mapping table."""
+    import re as _re
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+    obj = doc.resolve_num(num, gen)
+    if obj is None or obj.type != PdfObjType.Stream:
+        raise HTTPException(404, "Object not found or not a stream")
+
+    from pdf.filters import flat_decode
+    decoded = flat_decode(obj.stream_raw)
+    if decoded is None:
+        raise HTTPException(422, "Cannot decompress stream")
+    text = decoded.decode("latin-1", errors="replace")
+
+    mappings: list[dict] = []
+
+    # begincoderangechar / bfchar sections: <src_hex> <dst_hex>
+    for block in _re.findall(r'beginbfchar(.*?)endbfchar', text, _re.DOTALL):
+        for m in _re.finditer(r'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>', block):
+            src = int(m.group(1), 16)
+            dst_bytes = bytes.fromhex(m.group(2))
+            try:
+                char = dst_bytes.decode("utf-16-be")
+            except Exception:
+                char = "?"
+            code_point = int(m.group(2), 16) if len(dst_bytes) == 2 else ord(char[0]) if char else 0
+            mappings.append({
+                "src_hex": m.group(1).upper(),
+                "src_int": src,
+                "dst_hex": m.group(2).upper(),
+                "code_point": code_point,
+                "char": char,
+            })
+
+    # begincoderangechar / bfrange sections: <lo> <hi> <start_dst>
+    for block in _re.findall(r'beginbfrange(.*?)endbfrange', text, _re.DOTALL):
+        for m in _re.finditer(
+            r'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>',
+            block,
+        ):
+            lo = int(m.group(1), 16)
+            hi = int(m.group(2), 16)
+            base_bytes = bytes.fromhex(m.group(3))
+            base_cp = int.from_bytes(base_bytes, "big")
+            for i, src in enumerate(range(lo, hi + 1)):
+                cp = base_cp + i
+                try:
+                    char = chr(cp)
+                except Exception:
+                    char = "?"
+                mappings.append({
+                    "src_hex": format(src, "04X"),
+                    "src_int": src,
+                    "dst_hex": format(cp, "04X"),
+                    "code_point": cp,
+                    "char": char,
+                })
+
+    mappings.sort(key=lambda x: x["src_int"])
+
+    # Extract CMap name and type
+    name_m = _re.search(r'/CMapName\s+(/\S+)', text)
+    type_m = _re.search(r'/CMapType\s+(\d+)', text)
+    registry_m = _re.search(r'/Registry\s*\(([^)]+)\)', text)
+    ordering_m = _re.search(r'/Ordering\s*\(([^)]+)\)', text)
+
+    return {
+        "cmap_name": name_m.group(1) if name_m else None,
+        "cmap_type": int(type_m.group(1)) if type_m else None,
+        "registry": registry_m.group(1) if registry_m else None,
+        "ordering": ordering_m.group(1) if ordering_m else None,
+        "total_mappings": len(mappings),
+        "mappings": mappings[:2000],  # cap to avoid huge payloads
+    }
+
+
+# ---------------------------------------------------------------------------
+# FontDescriptor endpoint
+# ---------------------------------------------------------------------------
+
+_FONT_FLAGS = [
+    (1, "FixedPitch",  "All glyphs have the same width"),
+    (2, "Serif",       "Glyphs have serifs"),
+    (3, "Symbolic",    "Contains characters not in standard Latin"),
+    (4, "Script",      "Script/cursive glyphs"),
+    (6, "Nonsymbolic", "Uses standard Latin character set"),
+    (7, "Italic",      "Glyphs are italic"),
+    (17, "AllCap",     "All glyphs are upper case"),
+    (18, "SmallCap",   "Uses small-cap glyphs"),
+    (19, "ForceBold",  "Bold glyphs painted with extra pixels at small sizes"),
+]
+
+@app.get("/api/fontdescriptor/{upload_id}/{num}/{gen}")
+def get_fontdescriptor(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Return parsed FontDescriptor metrics for visualization."""
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+    obj = doc.resolve_num(num, gen)
+    if obj is None or not obj.is_dict():
+        raise HTTPException(404, "Object not found or not a dict")
+
+    def _num(key: str) -> float | None:
+        v = obj.get(key)
+        if v.is_int(): return float(v.ival)
+        if v.type == PdfObjType.Real: return v.dval
+        return None
+
+    def _name(key: str) -> str | None:
+        v = obj.get(key)
+        return v.sval if v.is_name() else None
+
+    flags_raw = int(obj.get("Flags").ival) if obj.get("Flags").is_int() else 0
+    active_flags = [
+        {"bit": bit, "name": name, "desc": desc}
+        for bit, name, desc in _FONT_FLAGS
+        if (flags_raw >> (bit - 1)) & 1
+    ]
+
+    bbox_obj = obj.get("FontBBox")
+    bbox = [int(v.ival) if v.is_int() else float(v.dval) if v.type == PdfObjType.Real else 0
+            for v in bbox_obj.arr] if bbox_obj.is_array() else None
+
+    # Resolve FontFile2 ref for linking
+    ff2 = obj.get("FontFile2")
+    ff2_num = ff2.ref.num if ff2.type == PdfObjType.Reference else None
+    cidset = obj.get("CIDSet")
+    cidset_num = cidset.ref.num if cidset.type == PdfObjType.Reference else None
+
+    return {
+        "font_name": _name("FontName"),
+        "flags_raw": flags_raw,
+        "flags": active_flags,
+        "ascent": _num("Ascent"),
+        "descent": _num("Descent"),
+        "cap_height": _num("CapHeight"),
+        "x_height": _num("XHeight"),
+        "italic_angle": _num("ItalicAngle"),
+        "stem_v": _num("StemV"),
+        "stem_h": _num("StemH"),
+        "font_weight": _num("FontWeight"),
+        "bbox": bbox,
+        "font_file2_num": ff2_num,
+        "cidset_num": cidset_num,
+        "missing_width": _num("MissingWidth"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# TrueType table directory endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/ttf_tables/{upload_id}/{num}/{gen}")
+def get_ttf_tables(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Parse a TrueType/OTF font stream and return the table directory."""
+    import struct as _struct
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+    obj = doc.resolve_num(num, gen)
+    if obj is None or obj.type != PdfObjType.Stream:
+        raise HTTPException(404, "Object not found or not a stream")
+
+    from pdf.filters import flat_decode
+    data = _decode_stream(obj)
+    if data is None or len(data) < 12:
+        raise HTTPException(422, "Cannot decode font stream or too short")
+
+    sfver = data[:4]
+    if sfver not in (b'\x00\x01\x00\x00', b'true', b'OTTO', b'ttcf'):
+        raise HTTPException(422, "Not a recognised TrueType/OTF font")
+
+    num_tables = _struct.unpack_from(">H", data, 4)[0]
+
+    _TABLE_DESCS: dict[str, str] = {
+        "cmap": "Character code to glyph index mapping",
+        "glyf": "Glyph outline data (TrueType)",
+        "head": "Font header — version, units per em, bounding box",
+        "hhea": "Horizontal header — ascender, descender, line gap",
+        "hmtx": "Horizontal metrics — advance width and left side bearing per glyph",
+        "loca": "Index to location — offsets into 'glyf' table",
+        "maxp": "Maximum profile — number of glyphs, stack depths",
+        "name": "Naming table — font name, copyright, version strings",
+        "post": "PostScript name and glyph name index",
+        "OS/2": "OS/2 and Windows metrics — weight class, panose, unicode ranges",
+        "cvt ": "Control value table for hinting",
+        "fpgm": "Font program — hinting bytecode run at font load",
+        "prep": "Control value program — hinting bytecode run per size",
+        "gasp": "Grid-fitting and scan-conversion procedure table",
+        "kern": "Kerning pairs",
+        "CFF ": "Compact Font Format outlines (OTF/CFF)",
+        "GDEF": "Glyph definition — base, ligature, mark, component classes",
+        "GPOS": "Glyph positioning — kerning, mark attachment",
+        "GSUB": "Glyph substitution — ligatures, alternates",
+        "VDMX": "Vertical device metrics",
+        "DSIG": "Digital signature",
+    }
+
+    tables = []
+    total_size = len(data)
+    for i in range(min(num_tables, 128)):
+        off = 12 + i * 16
+        if off + 16 > len(data):
+            break
+        tag_b, checksum, tbl_off, tbl_len = _struct.unpack_from(">4sIII", data, off)
+        tag = tag_b.decode("latin-1")
+        tables.append({
+            "tag": tag,
+            "checksum": f"0x{checksum:08X}",
+            "offset": tbl_off,
+            "length": tbl_len,
+            "desc": _TABLE_DESCS.get(tag.rstrip(), _TABLE_DESCS.get(tag, "—")),
+        })
+
+    tables.sort(key=lambda t: t["offset"])
+
+    sfver_str = {
+        b'\x00\x01\x00\x00': "TrueType 1.0",
+        b'true': "TrueType (Apple)",
+        b'OTTO': "OpenType/CFF",
+        b'ttcf': "TrueType Collection",
+    }.get(sfver, sfver.decode("latin-1"))
+
+    return {
+        "sfVersion": sfver_str,
+        "num_tables": num_tables,
+        "total_size": total_size,
+        "tables": tables,
+    }
+
+
 @app.get("/api/image_detail/{upload_id}/{num}/{gen}")
 def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     """Return structured metadata and JPEG segment info for an XObject image."""
     doc = _sessions.get(upload_id)
     if doc is None:
         raise HTTPException(404, "Session not found")
-
     obj = doc.resolve_num(num, gen)
     if obj is None or obj.type != PdfObjType.Stream:
         raise HTTPException(404, "Object not found or not a stream")

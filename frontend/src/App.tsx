@@ -11,6 +11,11 @@ function buildObjMap(node: TreeNode, map: Map<number, TreeNode>) {
   for (const child of node.children) buildObjMap(child, map)
 }
 
+function buildParentMap(node: TreeNode, map: Map<TreeNode, TreeNode>, parent: TreeNode | null = null) {
+  if (parent) map.set(node, parent)
+  for (const child of node.children) buildParentMap(child, map, node)
+}
+
 function App() {
   const [uploadId, setUploadId] = useState<string | null>(null)
   const [filename, setFilename] = useState<string | null>(null)
@@ -25,6 +30,23 @@ function App() {
     if (rootNode) buildObjMap(rootNode, map)
     return map
   }, [rootNode])
+
+  const parentMap = useMemo(() => {
+    const map = new Map<TreeNode, TreeNode>()
+    if (rootNode) buildParentMap(rootNode, map)
+    return map
+  }, [rootNode])
+
+  const selectedChain = useMemo(() => {
+    if (!selected) return []
+    const chain: TreeNode[] = []
+    let cur: TreeNode | undefined = selected
+    while (cur) {
+      chain.unshift(cur)
+      cur = parentMap.get(cur)
+    }
+    return chain
+  }, [selected, parentMap])
 
   const applyResponse = useCallback((resp: UploadResponse) => {
     setUploadId(resp.id)
@@ -91,7 +113,7 @@ function App() {
           <PanelResizeHandle className="resize-handle" />
 
           <Panel minSize={30} className="panel-right">
-            <DetailPane node={selected} uploadId={uploadId} onJumpToObj={handleJumpToObj} />
+            <DetailPane node={selected} chain={selectedChain} uploadId={uploadId} onJumpToObj={handleJumpToObj} onSelect={setSelected} />
           </Panel>
         </PanelGroup>
       </div>

@@ -350,13 +350,89 @@ html, body, #root {
 
 .detail-header {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 12px 6px;
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   min-height: 32px;
+}
+
+/* Breadcrumb row — ancestors above the current node label */
+.detail-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  overflow: hidden;
+}
+.detail-breadcrumb-item {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.detail-breadcrumb-link {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  transition: color 0.12s;
+}
+.detail-breadcrumb-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.detail-breadcrumb-sep {
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.5;
+  padding: 0 3px;
+}
+
+/* Back-references row — "referenced by obj X via key, obj Y via key" */
+.detail-backrefs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin-top: 1px;
+}
+.detail-backrefs-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.7;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+.detail-backref-item {
+  display: flex;
+  align-items: center;
+}
+.detail-backref-sep {
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+.detail-backref-link {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #e07a5f;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s;
+}
+.detail-backref-link:hover {
+  color: #f4a261;
+  text-decoration: underline;
+}
+.detail-backref-via {
+  color: var(--text-dim);
+  font-style: italic;
+  margin-left: 2px;
 }
 
 .detail-node-label {
@@ -1025,3 +1101,219 @@ html, body, #root {
 .palette-td-index   { color: var(--text-dim); font-weight: 600; text-align: right; padding-right: 12px; }
 .palette-td-hex     { color: var(--accent); font-family: monospace; }
 .palette-td-channel { color: var(--text-dim); text-align: right; padding-right: 12px; }
+
+/* -----------------------------------------------------------------------
+   ToUnicode CMap pane
+   ----------------------------------------------------------------------- */
+.cmap-pane { padding: 8px 0; }
+
+.cmap-header {
+  padding: 0 12px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.cmap-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--accent); margin-bottom: 4px;
+}
+.cmap-meta { display: flex; flex-wrap: wrap; gap: 10px; }
+.cmap-meta-item { font-size: 11px; color: var(--text-dim); }
+.cmap-meta-item b { color: var(--text); }
+.cmap-truncated { color: #f4a261; }
+
+.cmap-search-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+}
+.cmap-search {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+  width: 260px;
+}
+.cmap-search:focus { outline: none; border-color: var(--accent); }
+.cmap-search-count { font-size: 11px; color: var(--text-dim); }
+
+.cmap-table-wrap { overflow: auto; padding: 0 12px 8px; max-height: 420px; }
+.cmap-table {
+  border-collapse: collapse; font-size: 12px; width: 100%;
+}
+.cmap-table th {
+  position: sticky; top: 0; background: var(--bg2);
+  text-align: left; padding: 4px 12px 4px 4px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim); font-weight: 600;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.cmap-table td {
+  padding: 3px 12px 3px 4px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.cmap-table tr:hover td { background: rgba(255,255,255,0.03); }
+.cmap-mono { font-family: monospace; color: var(--accent); }
+.cmap-glyph { font-size: 16px; text-align: center; width: 2em; }
+.cmap-nochar { color: var(--text-dim); }
+.cmap-empty { color: var(--text-dim); padding: 12px; text-align: center; }
+
+.cmap-pagination {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; font-size: 12px;
+}
+.cmap-page-btn {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text);
+  cursor: pointer; padding: 3px 10px; font-size: 12px;
+}
+.cmap-page-btn:disabled { opacity: 0.4; cursor: default; }
+.cmap-page-btn:hover:not(:disabled) { border-color: var(--accent); }
+.cmap-page-info { color: var(--text-dim); }
+
+/* -----------------------------------------------------------------------
+   FontDescriptor pane
+   ----------------------------------------------------------------------- */
+.fd-pane { padding: 8px 0; }
+
+.fd-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--accent);
+  padding: 0 12px 8px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: baseline; gap: 8px;
+}
+.fd-font-name {
+  font-family: monospace; font-size: 12px; font-weight: 400;
+  text-transform: none; letter-spacing: 0; color: var(--text);
+}
+
+.fd-body {
+  display: flex; flex-wrap: wrap; gap: 16px;
+  padding: 10px 12px;
+}
+.fd-diagram-col { flex: 0 0 auto; }
+.fd-info-col { flex: 1 1 220px; min-width: 180px; }
+
+.fd-section-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-dim); margin-bottom: 6px;
+}
+
+.fd-em-diagram {
+  display: block; background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+
+.fd-bbox {
+  font-family: monospace; font-size: 11px; color: var(--text-dim);
+  margin-top: 6px; text-align: center;
+}
+
+.fd-metrics-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.fd-metric-key {
+  padding: 3px 12px 3px 0; color: var(--text-dim);
+  font-size: 11px; white-space: nowrap;
+}
+.fd-metric-val {
+  padding: 3px 0; color: var(--text);
+  font-family: monospace; font-size: 12px;
+}
+
+.fd-flags-raw {
+  font-family: monospace; font-size: 11px;
+  color: var(--text-dim); margin-left: 6px; font-weight: 400;
+  text-transform: none; letter-spacing: 0;
+}
+.fd-flags-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.fd-flag-chip {
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(110, 168, 254, 0.12);
+  border: 1px solid rgba(110, 168, 254, 0.3);
+  border-radius: 3px; padding: 2px 7px;
+  font-size: 11px; cursor: default;
+}
+.fd-flag-bit { color: var(--text-dim); font-family: monospace; font-size: 10px; }
+.fd-flag-name { color: #6ea8fe; font-weight: 600; }
+.fd-no-flags { color: var(--text-dim); font-size: 11px; }
+
+.fd-jump-btn {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--accent);
+  cursor: pointer; font-size: 11px;
+  padding: 3px 8px; margin-right: 6px; margin-bottom: 4px;
+}
+.fd-jump-btn:hover { border-color: var(--accent); }
+
+/* -----------------------------------------------------------------------
+   TrueType / OpenType table pane
+   ----------------------------------------------------------------------- */
+.ttf-pane { padding: 8px 0; }
+
+.ttf-header {
+  padding: 0 12px 8px; border-bottom: 1px solid var(--border);
+}
+.ttf-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--accent); margin-bottom: 4px;
+}
+.ttf-meta { display: flex; flex-wrap: wrap; gap: 10px; }
+.ttf-meta-item { font-size: 11px; color: var(--text-dim); }
+.ttf-meta-item b { color: var(--text); }
+
+/* Structure bar */
+.ttf-struct-wrap { padding: 10px 12px 0; }
+.ttf-struct-bar {
+  display: flex; height: 18px; border-radius: 3px;
+  overflow: hidden; border: 1px solid var(--border);
+}
+.ttf-struct-seg { cursor: default; min-width: 2px; }
+.ttf-struct-legend {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 6px 0; font-size: 10px;
+}
+.ttf-legend-item {
+  display: flex; align-items: center; gap: 3px;
+  color: var(--text-dim);
+}
+.ttf-legend-dot {
+  width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
+}
+.ttf-legend-total {
+  margin-left: auto; color: var(--text-dim); font-size: 10px;
+}
+
+/* Table */
+.ttf-table-wrap { overflow: auto; padding: 0 12px 8px; max-height: 380px; }
+.ttf-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.ttf-table th {
+  position: sticky; top: 0; background: var(--bg2);
+  text-align: left; padding: 4px 12px 4px 4px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim); font-weight: 600;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.ttf-table td {
+  padding: 4px 12px 4px 4px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.ttf-table tr:hover td { background: rgba(255,255,255,0.03); }
+
+.ttf-tag-pill {
+  display: inline-block; font-family: monospace; font-size: 12px;
+  font-weight: 700; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid; background: rgba(255,255,255,0.04);
+}
+.ttf-mono { font-family: monospace; font-size: 11px; color: var(--text-dim); }
+.ttf-checksum { opacity: 0.6; }
+.ttf-desc { font-size: 11px; color: var(--text-dim); }
+
+/* Section headings for detail-body */
+.detail-cmap-section,
+.detail-fd-section,
+.detail-ttf-section {
+  border-bottom: 1px solid var(--border);
+}
+

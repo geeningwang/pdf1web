@@ -24,6 +24,9 @@ export interface ObjectDetailResponse {
   is_icc_profile: boolean
   is_content_stream: boolean
   is_palette: boolean
+  is_tounicode: boolean
+  is_font_descriptor: boolean
+  is_ttf: boolean
   image_filter: string | null
   obj_num: number
   gen_num: number
@@ -294,7 +297,6 @@ export async function fetchPaletteData(
 /* -----------------------------------------------------------------------
    Store API
    ----------------------------------------------------------------------- */
-
 export interface StoreFile {
   filename: string
   size: number
@@ -329,5 +331,128 @@ export async function openFromStore(filename: string): Promise<UploadResponse> {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(err.detail ?? 'Open from store failed')
   }
+  return res.json()
+}
+
+/* -----------------------------------------------------------------------
+   ToUnicode CMap API
+   ----------------------------------------------------------------------- */
+
+export interface CMapEntry {
+  src_hex: string
+  src_int: number
+  dst_hex: string
+  code_point: number
+  char: string
+}
+
+export interface ToUnicodeData {
+  cmap_name: string | null
+  cmap_type: number | null
+  registry: string | null
+  ordering: string | null
+  total_mappings: number
+  mappings: CMapEntry[]
+}
+
+export async function fetchToUnicode(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<ToUnicodeData | null> {
+  const res = await fetch(`${BASE}/tounicode/${uploadId}/${num}/${gen}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+/* -----------------------------------------------------------------------
+   FontDescriptor API
+   ----------------------------------------------------------------------- */
+
+export interface FontFlag {
+  bit: number
+  name: string
+  desc: string
+}
+
+export interface FontDescriptorData {
+  font_name: string | null
+  flags_raw: number
+  flags: FontFlag[]
+  ascent: number | null
+  descent: number | null
+  cap_height: number | null
+  x_height: number | null
+  italic_angle: number | null
+  stem_v: number | null
+  stem_h: number | null
+  font_weight: number | null
+  bbox: number[] | null
+  font_file2_num: number | null
+  cidset_num: number | null
+  missing_width: number | null
+}
+
+export async function fetchFontDescriptor(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<FontDescriptorData | null> {
+  const res = await fetch(`${BASE}/fontdescriptor/${uploadId}/${num}/${gen}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+/* -----------------------------------------------------------------------
+   TrueType table directory API
+   ----------------------------------------------------------------------- */
+
+export interface TtfTable {
+  tag: string
+  checksum: string
+  offset: number
+  length: number
+  desc: string
+}
+
+export interface TtfTablesData {
+  sfVersion: string
+  num_tables: number
+  total_size: number
+  tables: TtfTable[]
+}
+
+export async function fetchTtfTables(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<TtfTablesData | null> {
+  const res = await fetch(`${BASE}/ttf_tables/${uploadId}/${num}/${gen}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+/* -----------------------------------------------------------------------
+   Back-references (cross-reference) API
+   ----------------------------------------------------------------------- */
+
+export interface BackRef {
+  from_num: number
+  from_gen: number
+  key_path: string
+  type_name: string
+}
+
+export interface BackRefsData {
+  obj_num: number
+  refs: BackRef[]
+}
+
+export async function fetchBackRefs(
+  uploadId: string,
+  num: number,
+): Promise<BackRefsData | null> {
+  const res = await fetch(`${BASE}/backrefs/${uploadId}/${num}`)
+  if (!res.ok) return null
   return res.json()
 }

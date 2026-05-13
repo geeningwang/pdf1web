@@ -1,15 +1,20 @@
 import React, { useEffect, useState } from 'react'
-import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData } from '../api'
-import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, imageUrl } from '../api'
+import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData, ToUnicodeData, FontDescriptorData, TtfTablesData, BackRefsData } from '../api'
+import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, imageUrl } from '../api'
 import IccPane from './IccPane'
 import ImagePane from './ImagePane'
 import ContentStreamPane from './ContentStreamPane'
 import PalettePane from './PalettePane'
+import ToUnicodePane from './ToUnicodePane'
+import FontDescriptorPane from './FontDescriptorPane'
+import TtfTablesPane from './TtfTablesPane'
 
 interface Props {
   node: TreeNode | null
+  chain: TreeNode[]
   uploadId: string | null
   onJumpToObj: (num: number) => void
+  onSelect: (node: TreeNode) => void
 }
 
 /** Parse detail text and turn every "N G R" reference into a clickable span. */
@@ -39,7 +44,7 @@ function renderDetail(text: string, onJump: (num: number) => void): React.ReactN
   return result
 }
 
-const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
+const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSelect }) => {
   const [detail, setDetail] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -49,6 +54,10 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
   const [imageDetail, setImageDetail] = useState<ImageDetailData | null>(null)
   const [contentStreamData, setContentStreamData] = useState<ContentStreamData | null>(null)
   const [paletteData, setPaletteData] = useState<PaletteData | null>(null)
+  const [toUnicodeData, setToUnicodeData] = useState<ToUnicodeData | null>(null)
+  const [fontDescData, setFontDescData] = useState<FontDescriptorData | null>(null)
+  const [ttfData, setTtfData] = useState<TtfTablesData | null>(null)
+  const [backRefs, setBackRefs] = useState<BackRefsData | null>(null)
 
   useEffect(() => {
     if (!node) {
@@ -66,6 +75,10 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
     setImageDetail(null)
     setContentStreamData(null)
     setPaletteData(null)
+    setToUnicodeData(null)
+    setFontDescData(null)
+    setTtfData(null)
+    setBackRefs(null)
     setError(null)
 
     // If the node already has detail text, use it directly
@@ -104,6 +117,21 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
           fetchPaletteData(uploadId, node.obj_num, node.gen_num)
             .then(d => setPaletteData(d))
         }
+        if (resp.is_tounicode) {
+          fetchToUnicode(uploadId, node.obj_num, node.gen_num)
+            .then(d => setToUnicodeData(d))
+        }
+        if (resp.is_font_descriptor) {
+          fetchFontDescriptor(uploadId, node.obj_num, node.gen_num)
+            .then(d => setFontDescData(d))
+        }
+        if (resp.is_ttf) {
+          fetchTtfTables(uploadId, node.obj_num, node.gen_num)
+            .then(d => setTtfData(d))
+        }
+        // Always fetch back-references for any real object
+        fetchBackRefs(uploadId, node.obj_num)
+          .then(d => setBackRefs(d))
       })
       .catch(err => {
         setError(String(err))
@@ -124,7 +152,41 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
   return (
     <div className="detail-pane">
       <div className="detail-header">
+        {chain.length > 1 && (
+          <div className="detail-breadcrumb">
+            {chain.slice(0, -1).map((ancestor, i) => (
+              <span key={i} className="detail-breadcrumb-item">
+                <span
+                  className="detail-breadcrumb-link"
+                  title={ancestor.label}
+                  onClick={() => onSelect(ancestor)}
+                >
+                  {ancestor.label}
+                </span>
+                <span className="detail-breadcrumb-sep">›</span>
+              </span>
+            ))}
+          </div>
+        )}
         <span className="detail-node-label">{node.label}</span>
+        {backRefs && backRefs.refs.length > 0 && (
+          <div className="detail-backrefs">
+            <span className="detail-backrefs-label">referenced by</span>
+            {backRefs.refs.map((r, i) => (
+              <span key={i} className="detail-backref-item">
+                {i > 0 && <span className="detail-backref-sep">,</span>}
+                <span
+                  className="detail-backref-link"
+                  title={`obj ${r.from_num} ${r.from_gen} R (${r.type_name}) via ${r.key_path}`}
+                  onClick={() => onJumpToObj(r.from_num)}
+                >
+                  obj {r.from_num}
+                  <span className="detail-backref-via"> via {r.key_path}</span>
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="detail-body">
@@ -167,6 +229,24 @@ const DetailPane: React.FC<Props> = ({ node, uploadId, onJumpToObj }) => {
         {!canShowImage && !iccData && !contentStreamData && paletteData && (
           <div className="detail-palette-section">
             <PalettePane data={paletteData} />
+          </div>
+        )}
+
+        {!canShowImage && toUnicodeData && (
+          <div className="detail-cmap-section">
+            <ToUnicodePane data={toUnicodeData} onJumpToObj={onJumpToObj} />
+          </div>
+        )}
+
+        {!canShowImage && fontDescData && (
+          <div className="detail-fd-section">
+            <FontDescriptorPane data={fontDescData} onJumpToObj={onJumpToObj} />
+          </div>
+        )}
+
+        {!canShowImage && ttfData && (
+          <div className="detail-ttf-section">
+            <TtfTablesPane data={ttfData} />
           </div>
         )}
 
