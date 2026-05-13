@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData, ToUnicodeData, FontDescriptorData, TtfTablesData, BackRefsData, CidToGidData, CidSetData } from '../api'
-import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, fetchCidToGid, fetchCidSet, imageUrl } from '../api'
+import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, fetchCidToGid, fetchCidSet, imageUrl, pageRenderUrl } from '../api'
 import IccPane from './IccPane'
 import ImagePane from './ImagePane'
 import ContentStreamPane from './ContentStreamPane'
@@ -63,6 +63,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
   const [cidToGidData, setCidToGidData] = useState<CidToGidData | null>(null)
   const [cidSetData, setCidSetData] = useState<CidSetData | null>(null)
   const [backRefs, setBackRefs] = useState<BackRefsData | null>(null)
+  const [pageRenderHidden, setPageRenderHidden] = useState(false)
 
   useEffect(() => {
     if (!node) {
@@ -86,6 +87,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
     setCidToGidData(null)
     setCidSetData(null)
     setBackRefs(null)
+    setPageRenderHidden(false)
     setError(null)
 
     // If the node already has detail text, use it directly
@@ -246,6 +248,14 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
 
             {!canShowImage && !iccData && contentStreamData && (
               <div className="detail-cs-section">
+                {uploadId && !pageRenderHidden && (
+                  <img
+                    src={pageRenderUrl(uploadId, node.obj_num, node.gen_num)}
+                    alt="Rendered page"
+                    className="detail-page-render"
+                    onError={() => setPageRenderHidden(true)}
+                  />
+                )}
                 <ContentStreamPane data={contentStreamData} />
               </div>
             )}

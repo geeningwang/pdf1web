@@ -572,6 +572,17 @@ html, body, #root {
   border: 1px solid var(--border);
 }
 
+.detail-page-render {
+  display: block;
+  max-width: 100%;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 10px;
+  object-fit: contain;
+}
+
 /* -----------------------------------------------------------------------
    ICC Profile Pane
    ----------------------------------------------------------------------- */

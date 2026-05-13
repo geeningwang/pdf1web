@@ -309,8 +309,6 @@ def _operand_summary(op: str, operands: list[tuple[str, str]]) -> str:
 
 # ── Main parser ───────────────────────────────────────────────────────────────
 
-_MAX_OPS = 2000  # cap returned operations to keep response size reasonable
-
 # PDF operator keywords used for quick content-stream detection
 _DETECTION_OPS = frozenset(
     'BT ET Tf Tm Td TD Tj TJ q Q cm gs rg RG cs CS scn SCN re m l h S f Do w'.split()
@@ -410,11 +408,10 @@ def parse_content_stream(data: bytes) -> dict | None:
     ]
 
     total = len(operations)
-    truncated = total > _MAX_OPS
     return {
-        'operations': operations[:_MAX_OPS],
+        'operations': operations,
         'total_ops': total,
-        'truncated': truncated,
+        'truncated': False,
         'structure': structure,
         'category_counts': counts,
     }

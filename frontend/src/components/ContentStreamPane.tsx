@@ -78,15 +78,13 @@ function CategorySummary({ counts }: { counts: Record<string, number> }) {
 
 // ------------------------------------------------------------------ component
 
-const MAX_DISPLAY = 500  // rows shown in table; rest visible in text pane
-
 interface Props {
   data: ContentStreamData
 }
 
 const ContentStreamPane: React.FC<Props> = ({ data }) => {
-  const displayed = data.operations.slice(0, MAX_DISPLAY)
-  const hiddenCount = data.total_ops - displayed.length
+  const displayed = data.operations
+  const hiddenCount = 0
 
   return (
     <div className="cs-pane">
@@ -110,11 +108,6 @@ const ContentStreamPane: React.FC<Props> = ({ data }) => {
       {/* Operator table */}
       <div className="cs-section-label">
         Operators
-        {hiddenCount > 0 && (
-          <span className="cs-table-note">
-            {` (showing first ${MAX_DISPLAY.toLocaleString()} of ${data.total_ops.toLocaleString()} — full listing in text pane below)`}
-          </span>
-        )}
       </div>
       <div className="cs-ops-wrap">
         <table className="cs-ops-table">

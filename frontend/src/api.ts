@@ -119,6 +119,10 @@ export function imageUrl(uploadId: string, num: number, gen: number): string {
   return `${BASE}/image/${uploadId}/${num}/${gen}`
 }
 
+export function pageRenderUrl(uploadId: string, num: number, gen: number): string {
+  return `${BASE}/page_render/${uploadId}/${num}/${gen}`
+}
+
 export async function fetchIccProfile(
   uploadId: string,
   num: number,
