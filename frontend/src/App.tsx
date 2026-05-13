@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import type { TreeNode } from './api'
+import type { TreeNode, UploadResponse } from './api'
 import { uploadPdf } from './api'
 import DetailPane from './components/DetailPane'
 import Toolbar from './components/Toolbar'
@@ -26,6 +26,14 @@ function App() {
     return map
   }, [rootNode])
 
+  const applyResponse = useCallback((resp: UploadResponse) => {
+    setUploadId(resp.id)
+    setFilename(resp.filename)
+    setVersion(resp.version)
+    setRootNode(resp.tree)
+    setSelected(null)
+  }, [])
+
   const handleFile = useCallback(async (file: File) => {
     setLoading(true)
     setError(null)
@@ -33,16 +41,18 @@ function App() {
     setRootNode(null)
     try {
       const resp = await uploadPdf(file)
-      setUploadId(resp.id)
-      setFilename(resp.filename)
-      setVersion(resp.version)
-      setRootNode(resp.tree)
+      applyResponse(resp)
     } catch (err) {
       setError(String(err))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [applyResponse])
+
+  const handleOpen = useCallback((resp: UploadResponse) => {
+    setError(null)
+    applyResponse(resp)
+  }, [applyResponse])
 
   const handleJumpToObj = useCallback((num: number) => {
     const node = objMap.get(num)
@@ -58,6 +68,7 @@ function App() {
         version={version}
         loading={loading}
         onFile={handleFile}
+        onOpen={handleOpen}
       />
 
       {error && (

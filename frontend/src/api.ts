@@ -290,3 +290,44 @@ export async function fetchPaletteData(
   if (!res.ok) return null
   return res.json()
 }
+
+/* -----------------------------------------------------------------------
+   Store API
+   ----------------------------------------------------------------------- */
+
+export interface StoreFile {
+  filename: string
+  size: number
+}
+
+export async function storePdf(file: File): Promise<{ filename: string; size: number }> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${BASE}/store`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail ?? 'Store failed')
+  }
+  return res.json()
+}
+
+export async function listStore(): Promise<StoreFile[]> {
+  const res = await fetch(`${BASE}/store`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail ?? 'Failed to list store')
+  }
+  const data = await res.json()
+  return data.files as StoreFile[]
+}
+
+export async function openFromStore(filename: string): Promise<UploadResponse> {
+  const res = await fetch(`${BASE}/open_from_store/${encodeURIComponent(filename)}`, {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail ?? 'Open from store failed')
+  }
+  return res.json()
+}

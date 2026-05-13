@@ -45,6 +45,10 @@ _MAX_SESSIONS = 20  # evict oldest if exceeded
 _UPLOADS_DIR = Path(__file__).parent / "uploads"
 _UPLOADS_DIR.mkdir(exist_ok=True)
 
+# Directory for persistently stored PDFs
+_STORE_DIR = Path(__file__).parent / "store"
+_STORE_DIR.mkdir(exist_ok=True)
+
 # Serve built frontend static files if the dist folder exists
 _DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
@@ -156,6 +160,80 @@ async def upload_pdf(file: UploadFile = File(...)) -> dict[str, Any]:
         "id": upload_id,
         "version": doc.version(),
         "filename": file.filename,
+        "tree": root.to_dict() if root else None,
+    }
+
+
+@app.post("/api/store")
+async def store_pdf(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Upload a PDF and save it permanently to the store folder."""
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files are accepted")
+
+    data = await file.read()
+    if len(data) < 8:
+        raise HTTPException(400, "File too small to be a PDF")
+
+    # Sanitize filename: keep only safe characters
+    safe_name = Path(file.filename).name
+    dest = _STORE_DIR / safe_name
+
+    # If a file with that name already exists, add a numeric suffix
+    if dest.exists():
+        stem = dest.stem
+        suffix = dest.suffix
+        counter = 1
+        while dest.exists():
+            dest = _STORE_DIR / f"{stem}_{counter}{suffix}"
+            counter += 1
+
+    dest.write_bytes(data)
+    return {"filename": dest.name, "size": len(data)}
+
+
+@app.get("/api/store")
+def list_store() -> dict[str, Any]:
+    """Return a list of PDF files in the store folder."""
+    files = sorted(
+        [
+            {"filename": f.name, "size": f.stat().st_size}
+            for f in _STORE_DIR.iterdir()
+            if f.is_file() and f.suffix.lower() == ".pdf"
+        ],
+        key=lambda x: x["filename"].lower(),
+    )
+    return {"files": files}
+
+
+@app.post("/api/open_from_store/{filename}")
+def open_from_store(filename: str) -> dict[str, Any]:
+    """Parse a PDF from the store folder and return its tree (like /api/upload)."""
+    # Prevent path traversal
+    safe_name = Path(filename).name
+    pdf_path = _STORE_DIR / safe_name
+    if not pdf_path.exists() or not pdf_path.is_file():
+        raise HTTPException(404, f"File '{safe_name}' not found in store")
+
+    data = pdf_path.read_bytes()
+    try:
+        doc = PdfDocument.from_bytes(data, filename=safe_name)
+    except Exception as exc:
+        raise HTTPException(400, f"Failed to parse PDF: {exc}") from exc
+
+    upload_id = _make_id()
+    _evict_if_needed()
+    _sessions[upload_id] = doc
+
+    try:
+        _save_upload(upload_id, safe_name, data, doc)
+    except Exception as exc:
+        logging.warning("Could not persist upload %s: %s", upload_id, exc)
+
+    root = doc.root()
+    return {
+        "id": upload_id,
+        "version": doc.version(),
+        "filename": safe_name,
         "tree": root.to_dict() if root else None,
     }
 
@@ -443,6 +521,10 @@ def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         except Exception:
             pass
         dp = obj.get("DecodeParms")
+        if dp.type == PdfObjType.Reference:
+            dp_resolved = doc.resolve_num(dp.ref.num, dp.ref.gen)
+            if dp_resolved is not None:
+                dp = dp_resolved
         predictor = 1
         flat_cols = width
         flat_colors = 1
@@ -530,6 +612,28 @@ def get_image(upload_id: str, num: int, gen: int) -> Response:
     width = int(w_obj.ival)
     height = int(h_obj.ival)
     bpc = int(bpc_obj.ival) if bpc_obj.is_int() else 8
+
+    # Apply FlateDecode predictor un-filtering if needed
+    if filter_name == "FlateDecode":
+        dp = obj.get("DecodeParms")
+        # DecodeParms may be an indirect reference; resolve it
+        if dp.type == PdfObjType.Reference:
+            dp_resolved = doc.resolve_num(dp.ref.num, dp.ref.gen)
+            if dp_resolved is not None:
+                dp = dp_resolved
+        if dp.is_dict():
+            pred_obj = dp.get("Predictor")
+            predictor = int(pred_obj.ival) if pred_obj.is_int() else 1
+            cols_obj = dp.get("Columns")
+            pred_cols = int(cols_obj.ival) if cols_obj.is_int() else width
+            colors_obj = dp.get("Colors")
+            pred_colors = int(colors_obj.ival) if colors_obj.is_int() else 1
+            if predictor >= 10:
+                # PNG predictors — strip filter bytes and undo row filters
+                decoded = _apply_png_predictor(decoded, pred_cols, pred_colors, bpc)
+            elif predictor == 2:
+                # TIFF horizontal differencing
+                decoded = _apply_tiff_predictor(decoded, pred_cols, pred_colors, bpc)
 
     # Fully resolve ColorSpace (may be indirect reference)
     cs_resolved = _resolve_cs(doc, cs_obj)
@@ -724,6 +828,68 @@ def _expand_1bit(data: bytes, width: int, height: int, channels: int = 1) -> byt
     return bytes(result)
 
 
+def _apply_png_predictor(data: bytes, width: int, channels: int, bpc: int = 8) -> bytes:
+    """Reverse the PNG row filter bytes from FlateDecode+PNGPredictor streams.
+
+    Each decoded row starts with a filter-type byte (0-4) followed by
+    ``width * channels * (bpc // 8)`` bytes.  Returns the raw pixel bytes with
+    filter bytes stripped and prediction undone.
+    """
+    bytes_per_sample = max(1, bpc // 8)
+    bpp = channels * bytes_per_sample  # bytes per pixel
+    stride = width * channels * bytes_per_sample
+    row_len = stride + 1  # +1 for the filter byte
+    num_rows = len(data) // row_len
+    out = bytearray()
+    prev_row = bytearray(stride)
+    for r in range(num_rows):
+        row_start = r * row_len
+        ftype = data[row_start]
+        raw = bytearray(data[row_start + 1: row_start + 1 + stride])
+        if ftype == 0:  # None
+            pass
+        elif ftype == 1:  # Sub
+            for i in range(bpp, stride):
+                raw[i] = (raw[i] + raw[i - bpp]) & 0xFF
+        elif ftype == 2:  # Up
+            for i in range(stride):
+                raw[i] = (raw[i] + prev_row[i]) & 0xFF
+        elif ftype == 3:  # Average
+            for i in range(stride):
+                left = raw[i - bpp] if i >= bpp else 0
+                raw[i] = (raw[i] + (left + prev_row[i]) // 2) & 0xFF
+        elif ftype == 4:  # Paeth
+            for i in range(stride):
+                left = raw[i - bpp] if i >= bpp else 0
+                up = prev_row[i]
+                up_left = prev_row[i - bpp] if i >= bpp else 0
+                p = left + up - up_left
+                pa, pb, pc = abs(p - left), abs(p - up), abs(p - up_left)
+                if pa <= pb and pa <= pc:
+                    pr = left
+                elif pb <= pc:
+                    pr = up
+                else:
+                    pr = up_left
+                raw[i] = (raw[i] + pr) & 0xFF
+        out.extend(raw)
+        prev_row = raw
+    return bytes(out)
+
+
+def _apply_tiff_predictor(data: bytes, width: int, channels: int, bpc: int = 8) -> bytes:
+    """Undo TIFF predictor 2 (horizontal differencing)."""
+    bytes_per_sample = max(1, bpc // 8)
+    bpp = channels * bytes_per_sample
+    stride = width * bpp
+    out = bytearray(data)
+    for r in range(len(data) // stride):
+        base = r * stride
+        for i in range(base + bpp, base + stride):
+            out[i] = (out[i] + out[i - bpp]) & 0xFF
+    return bytes(out)
+
+
 # ---------------------------------------------------------------------------
 # Minimal PNG encoder (no Pillow required)
 # ---------------------------------------------------------------------------
@@ -732,11 +898,13 @@ def _raw_to_png(
     raw: bytes, width: int, height: int, channels: int, bpc: int
 ) -> bytes:
     """Encode raw pixel data as a PNG byte string."""
-    bit_depth = min(bpc, 8)
+    # PNG supports bit depths 1, 2, 4, 8, 16; clamp to 8 or 16
+    bit_depth = 16 if bpc >= 16 else 8
+    bytes_per_sample = bit_depth // 8
     color_type = 2 if channels == 3 else 0  # 2=RGB, 0=grayscale
 
     # Build IDAT raw data (add filter byte 0x00 per scanline)
-    bytes_per_row = width * channels * (bit_depth // 8)
+    bytes_per_row = width * channels * bytes_per_sample
     idat_raw = bytearray()
     for row in range(height):
         idat_raw.append(0)  # filter type None
