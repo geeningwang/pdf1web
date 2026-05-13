@@ -495,6 +495,20 @@ class PdfDocument:
         except Exception:
             return None
 
+        # If /Length is an indirect reference, resolve it and re-read the stream body.
+        # This is legal per PDF spec (§7.3.2) but the parser has no resolver,
+        # so streams with indirect Length end up with empty stream_raw.
+        if obj.type == PdfObjType.Stream and len(obj.stream_raw) == 0:
+            length_obj = obj.get("Length")
+            if length_obj.is_ref():
+                # Cache the object stub first to avoid infinite recursion
+                self._object_cache[num] = obj
+                resolved_len = self.resolve_num(length_obj.ref.num, length_obj.ref.gen)
+                if resolved_len is not None and resolved_len.is_int():
+                    length = int(resolved_len.ival)
+                    if length > 0:
+                        obj.stream_raw = self._reader.read(obj.stream_offset, length)
+
         # Do NOT decode streams eagerly here — decode on demand in
         # get_object_detail() / _add_page_children() only when the user
         # actually selects a node.  Eager decoding of all streams during
