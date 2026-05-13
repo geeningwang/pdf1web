@@ -79,6 +79,13 @@ def _brief(obj: PdfObject) -> str:
     return ""
 
 
+def _brief_inline(obj: PdfObject) -> str:
+    """Like _brief but recursively expands nested arrays inline."""
+    if obj.type == PdfObjType.Array:
+        return "[ " + "  ".join(_brief_inline(item) for item in obj.arr) + " ]"
+    return _brief(obj)
+
+
 def _check_indexed_arr(arr: list[PdfObject], result: set[int]) -> None:
     """If *arr* is [/Indexed, base_cs, hival, lookup_ref], add lookup_ref.num to result."""
     if (len(arr) >= 4
@@ -117,7 +124,11 @@ def _detail(obj: PdfObject, indent: int = 0) -> str:
     if t in (PdfObjType.Dictionary, PdfObjType.Stream):
         lines = [pad + "<<"]
         for k, v in obj.dict.items():
-            lines.append(pad + f"  /{k}  {_brief(v)}")
+            if v.type == PdfObjType.Array:
+                inline = "[ " + "  ".join(_brief_inline(item) for item in v.arr) + " ]"
+                lines.append(pad + f"  /{k}  {inline}")
+            else:
+                lines.append(pad + f"  /{k}  {_brief(v)}")
         lines.append(pad + ">>")
         if t == PdfObjType.Stream:
             lines.append("stream")
@@ -712,6 +723,12 @@ class PdfDocument:
     ) -> PdfNode:
         node = PdfNode(label=label, detail=_detail(obj))
         if depth >= _MAX_DEPTH:
+            return node
+
+        if obj.type == PdfObjType.Reference:
+            node.obj_num = obj.ref.num
+            node.gen_num = obj.ref.gen
+            node.detail = f"Reference: {obj.ref.num} {obj.ref.gen} R\n\n(Select to load target object)"
             return node
 
         if obj.type in (PdfObjType.Dictionary, PdfObjType.Stream):

@@ -28,6 +28,7 @@ export interface ObjectDetailResponse {
   is_font_descriptor: boolean
   is_ttf: boolean
   is_cid_to_gid_map: boolean
+  is_cid_set: boolean
   image_filter: string | null
   obj_num: number
   gen_num: number
@@ -480,6 +481,23 @@ export async function fetchCidToGid(
   gen: number,
 ): Promise<CidToGidData | null> {
   const res = await fetch(`${BASE}/cid_to_gid/${uploadId}/${num}/${gen}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+export interface CidSetData {
+  total_slots: number    // bytes * 8
+  present_count: number  // number of set bits
+  last_cid: number       // highest set CID
+  coverage_hex: string   // raw bitmap bytes as hex (1 bit per CID, MSB first)
+}
+
+export async function fetchCidSet(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<CidSetData | null> {
+  const res = await fetch(`${BASE}/cid_set/${uploadId}/${num}/${gen}`)
   if (!res.ok) return null
   return res.json()
 }

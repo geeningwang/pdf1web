@@ -1370,7 +1370,8 @@ html, body, #root {
 .detail-cmap-section,
 .detail-fd-section,
 .detail-ttf-section,
-.detail-ctg-section {
+.detail-ctg-section,
+.detail-css-section {
   border-bottom: 1px solid var(--border);
 }
 
@@ -1414,3 +1415,34 @@ html, body, #root {
 .ctg-mono { font-family: var(--font-mono); }
 .ctg-dim { color: var(--text-dim); }
 .ctg-empty { padding: 8px 4px; color: var(--text-dim); font-size: 11px; }
+
+/* ---- CIDSet pane ---- */
+.css-pane { padding: 10px 14px; font-size: 12px; color: var(--text); }
+
+.css-header { margin-bottom: 8px; }
+.css-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.css-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
+.css-meta-item b { color: var(--text); }
+
+/* Heatmap */
+.css-heatmap-wrap { margin-bottom: 10px; }
+.css-heatmap-svg { border: 1px solid var(--border); border-radius: 3px; }
+.css-heatmap-legend { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+.css-legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+.css-dot-present { background: var(--accent-dim, #1e3a5f); border: 1px solid var(--border); }
+.css-dot-absent  { background: var(--css-absent, #f87171); }
+.css-dot-void    { background: var(--ctg-void, #111); border: 1px solid var(--border); }
+
+/* All-present message */
+.css-all-present { font-size: 11px; color: var(--text-dim); padding: 4px 0; font-style: italic; }
+
+/* Absent CIDs list */
+.css-absent-section { margin-top: 4px; }
+.css-absent-title { font-size: 11px; font-weight: 600; margin-bottom: 6px; }
+.css-absent-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.css-absent-chip {
+  font-family: var(--font-mono); font-size: 11px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 3px; padding: 1px 6px; color: var(--css-absent, #f87171);
+}
+.css-chip-hex { color: var(--text-dim); font-size: 10px; }

@@ -306,6 +306,7 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     is_font_descriptor = False
     is_ttf = False
     is_cid_to_gid_map = False
+    is_cid_set = False
     image_filter: str | None = None
     if obj and (obj.is_dict() or obj.type == PdfObjType.Stream):
         st = obj.get("Subtype")
@@ -345,6 +346,9 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         # CIDToGIDMap: CIDFontType2.CIDToGIDMap → stream
         if kp == "CIDToGIDMap" and tn == "Font":
             is_cid_to_gid_map = True
+        # CIDSet: FontDescriptor.CIDSet → stream (presence bitmap)
+        if kp == "CIDSet" and tn == "FontDescriptor":
+            is_cid_set = True
         # ICC profile: [/ICCBased stream_ref] — stream is always at index [1]
         if kp == "[1]":
             parent = doc.resolve_num(ref["from_num"], ref["from_gen"])
@@ -369,9 +373,42 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "is_font_descriptor": is_font_descriptor,
         "is_ttf": is_ttf,
         "is_cid_to_gid_map": is_cid_to_gid_map,
+        "is_cid_set": is_cid_set,
         "image_filter": image_filter,
         "obj_num": num,
         "gen_num": gen,
+    }
+
+
+@app.get("/api/cid_set/{upload_id}/{num}/{gen}")
+def get_cid_set(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Parse a CIDSet stream and return the presence bitmap."""
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+    obj = doc.resolve_num(num, gen)
+    if obj is None or obj.type != PdfObjType.Stream:
+        raise HTTPException(404, "Object not found or not a stream")
+
+    raw = _decode_stream(obj)
+    if raw is None:
+        raise HTTPException(422, "Cannot decode stream")
+
+    total_slots = len(raw) * 8  # total CID slots represented
+    present_cids: list[int] = []
+    for i, byte in enumerate(raw):
+        for bit in range(8):
+            if byte & (0x80 >> bit):
+                present_cids.append(i * 8 + bit)
+
+    # Last set bit = highest present CID
+    last_cid = present_cids[-1] if present_cids else 0
+
+    return {
+        "total_slots": total_slots,
+        "present_count": len(present_cids),
+        "last_cid": last_cid,
+        "coverage_hex": raw.hex(),  # raw bitmap bytes as hex (1 bit per CID, MSB first)
     }
 
 
@@ -810,6 +847,11 @@ def _ensure_ttf_required_tables(data: bytes) -> bytes:
         return data
 
     num_tables = _s.unpack_from(">H", data, 4)[0]
+    # Guard: if the table directory extends beyond the data, the stream is truncated.
+    # Return as-is; opentype.js will fail gracefully rather than the server crashing.
+    if len(data) < 12 + num_tables * 16:
+        return data
+
     existing = set()
     for i in range(num_tables):
         off = 12 + i * 16
