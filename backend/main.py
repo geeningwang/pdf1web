@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
@@ -1678,6 +1678,35 @@ def _raw_to_png(
         + chunk(b"IEND", b"")
     )
 
+
+# ---------------------------------------------------------------------------
+# Serve /static/ directory (downloads, misc files)
+# ---------------------------------------------------------------------------
+_STATIC_DIR = Path(__file__).parent / "static"
+_STATIC_DIR.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="downloads")
+
+# Directory listing for /store
+@app.get("/store", response_class=HTMLResponse, include_in_schema=False)
+def list_store():
+    files = sorted(p.name for p in _STORE_DIR.iterdir() if p.suffix.lower() == ".pdf")
+    items = "".join(
+        f'<li><a href="/store/{name}" target="_blank">{name}</a></li>\n'
+        for name in files
+    )
+    html = (
+        "<!doctype html><html><head>"
+        "<meta charset='utf-8'>"
+        "<title>PDF Store</title>"
+        "<style>body{font-family:sans-serif;padding:2rem}li{margin:.4rem 0}a{font-size:1rem}</style>"
+        "</head><body>"
+        f"<h1>PDF Store ({len(files)} files)</h1><ul>\n{items}</ul>"
+        "</body></html>"
+    )
+    return HTMLResponse(content=html)
+
+# Serve /store/ directory for direct PDF downloads
+app.mount("/store", StaticFiles(directory=str(_STORE_DIR)), name="store")
 
 # ---------------------------------------------------------------------------
 # Serve the built React frontend from /  (must be mounted last)

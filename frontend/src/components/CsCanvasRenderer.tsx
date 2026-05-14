@@ -18,7 +18,7 @@
 import React, { useRef, useEffect, useState } from 'react'
 import type { ContentStreamData, CsOperand } from '../api'
 import { imageUrl } from '../api'
-import * as opentype from 'opentype.js'
+import * as opentype from '../lib/opentype-compat'
 
 interface Props {
   data: ContentStreamData
@@ -194,15 +194,30 @@ interface FontStyle { cssFamily: string; bold: boolean; italic: boolean }
 
 function fontNameToStyle(baseFontName: string | null | undefined): FontStyle {
   if (!baseFontName) return { cssFamily: 'sans-serif', bold: false, italic: false }
-  // Strip embedded-subset prefix e.g. "ABCDEF+FontName" → "FontName"
+  // Strip embedded-subset prefix e.g. "AAAAAE+TimesNewRomanPSMT" → "TimesNewRomanPSMT"
   const name = baseFontName.replace(/^[A-Z]{6}\+/, '')
+
   const cssFamily =
+    // 1. Exact match against PDF standard font names
     PDF_FONT_MAP[name] ??
-    (/[Cc]ourier|[Mm]ono/.test(name)
+    // 2. Monospace families
+    (/courier|monospac/i.test(name)
       ? '"Courier New", Courier, monospace'
-      : /[Ss]erif/.test(name) && !/[Ss]ans/.test(name)
-        ? '"Times New Roman", Times, serif'
-        : 'Arial, Helvetica, sans-serif')
+    // 3. Serif families — match common embedded font name patterns:
+    //    TimesNewRoman*, Times*, Roman, Palatino, Garamond, Georgia,
+    //    Bookman, Baskerville, Cambria, Caslon, Minion, Bodoni, Charter,
+    //    Constantia, Didot, Bembo, Plantin, Sabon, Utopia, Warnock
+    : /times|newroman|palatin|garamond|georgia|bookman|baskervill|cambria|caslon|minion|bodoni|charter|constantia|didot|bembo|plantin|sabon|utopia|warnock/i.test(name) && !/sans/i.test(name)
+      ? '"Times New Roman", Times, serif'
+    // 4. Explicit "Serif" in name (but not "Sans-Serif")
+    : /serif/i.test(name) && !/sans/i.test(name)
+      ? '"Times New Roman", Times, serif'
+    // 5. Known sans-serif families
+    : /helvetica|arial|verdana|tahoma|trebuchet|calibri|myriad|futura|gilsans|gill.sans|optima|franklin|gothic|frutiger|univers|avenir/i.test(name)
+      ? 'Arial, Helvetica, sans-serif'
+    // 6. Default fallback
+    : 'Arial, Helvetica, sans-serif')
+
   return { cssFamily, bold: /Bold/i.test(name), italic: /Italic|Oblique/i.test(name) }
 }
 

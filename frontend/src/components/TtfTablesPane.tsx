@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import * as opentype from 'opentype.js'
+import * as opentype from '../lib/opentype-compat'
 import type { TtfTablesData, TtfTable } from '../api'
 
 function fmtBytes(n: number): string {
