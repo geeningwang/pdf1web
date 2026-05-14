@@ -14,3 +14,4 @@ frontend/node_modules/
 # User data — uploaded/stored PDFs and analysis logs
 backend/uploads/
 backend/store/
+backend/static/Godot_*.zip

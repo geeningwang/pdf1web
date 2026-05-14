@@ -960,7 +960,6 @@ html, body, #root {
 .cs-subtitle { font-size: 11px; color: var(--text-dim); }
 
 .cs-render-toggle {
-  margin-left: auto;
   font-size: 11px;
   padding: 1px 8px;
   border-radius: 3px;

@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import type { ContentStreamData, ContentStreamStructSeg } from '../api'
-import CsCanvasRenderer from './CsCanvasRenderer'
+import CsCanvasRenderer, { type CsCanvasHandle } from './CsCanvasRenderer'
 
 // ------------------------------------------------------------------ legend config
 
@@ -91,6 +91,7 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
 
   // default on if media_box is available
   const [showCanvas, setShowCanvas] = useState(canRender)
+  const rendererRef = useRef<CsCanvasHandle>(null)
 
   return (
     <div className="cs-pane">
@@ -102,19 +103,30 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
           {data.truncated ? ` (parsed first ${data.operations.length.toLocaleString()})` : ''}
         </span>
         {canRender && (
-          <button
-            className={`cs-render-toggle${showCanvas ? ' active' : ''}`}
-            onClick={() => setShowCanvas(v => !v)}
-            title="Toggle front-end canvas renderer"
-          >
-            {showCanvas ? 'Hide render' : 'Show render'}
-          </button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+            <button
+              className={`cs-render-toggle${showCanvas ? ' active' : ''}`}
+              onClick={() => setShowCanvas(v => !v)}
+              title="Toggle front-end canvas renderer"
+            >
+              {showCanvas ? 'Hide render' : 'Show render'}
+            </button>
+            {showCanvas && (
+              <button
+                className="cs-render-toggle"
+                onClick={() => rendererRef.current?.savePng()}
+                title="Save rendered page as PNG"
+              >
+                Save to PNG
+              </button>
+            )}
+          </div>
         )}
       </div>
 
       {/* Canvas renderer */}
       {canRender && showCanvas && (
-        <CsCanvasRenderer data={data} uploadId={uploadId!} />
+        <CsCanvasRenderer ref={rendererRef} data={data} uploadId={uploadId!} />
       )}
 
       {/* Structure bar */}

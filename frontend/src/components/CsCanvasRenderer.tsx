@@ -15,10 +15,14 @@
  *   - Type 3 / CID fonts (text is approximate)
  *   - Form XObjects (treated as no-op)
  */
-import React, { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, useImperativeHandle, forwardRef } from 'react'
 import type { ContentStreamData, CsOperand } from '../api'
 import { imageUrl } from '../api'
 import * as opentype from '../lib/opentype-compat'
+
+export interface CsCanvasHandle {
+  savePng: () => void
+}
 
 interface Props {
   data: ContentStreamData
@@ -82,44 +86,6 @@ function unescapePdfLiteralToBytes(s: string): number[] {
  * Uses the font's ToUnicode CMap for glyph-code→Unicode lookup.
  * Falls back to printable-ASCII for unmapped 1-byte codes.
  */
-function decodePdfStringWithFont(raw: string, font: FontRes): string {
-  const isType0 = font?.subtype === 'Type0'
-  const cmap    = font?.cmap ?? null
-
-  if (raw.startsWith('(') && raw.endsWith(')')) {
-    const bytes = unescapePdfLiteralToBytes(raw.slice(1, -1))
-    let result = ''
-    if (isType0) {
-      for (let i = 0; i + 1 < bytes.length; i += 2) {
-        const code = (bytes[i] << 8) | bytes[i + 1]
-        result += cmap?.[code] ?? '\u00b7'
-      }
-    } else {
-      for (const b of bytes) {
-        result += cmap?.[b] ?? (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : '\u00b7')
-      }
-    }
-    return result
-  }
-
-  if (raw.startsWith('<') && raw.endsWith('>')) {
-    const hex       = raw.slice(1, -1).replace(/\s/g, '')
-    const codeWidth = isType0 ? 4 : 2
-    let result = ''
-    for (let i = 0; i < hex.length; i += codeWidth) {
-      const code = parseInt(hex.substr(i, codeWidth), 16)
-      if (cmap && cmap[code] !== undefined) {
-        result += cmap[code]
-      } else {
-        const byte = parseInt(hex.substr(i, 2), 16)
-        result += byte >= 0x20 && byte < 0x7f ? String.fromCharCode(byte) : '\u00b7'
-      }
-    }
-    return result
-  }
-
-  return raw
-}
 /** Extract raw byte values from a PDF string token (literal or hex). */
 function rawTokenToBytes(rawToken: string): number[] {
   if (rawToken.startsWith('(') && rawToken.endsWith(')')) {
@@ -392,12 +358,23 @@ function renderOps(
       ts.tm = matMul([1, 0, 0, 1, advTotal, 0], ts.tm)
 
     } else {
-      // ── Fallback: decode to Unicode + ctx.fillText ──────────────────────────
-      const text = decodePdfStringWithFont(rawToken, fontEntry)
-      if (!text) return
+      // ── Fallback: render byte-by-byte using PDF Widths ──────────────────────
+      // IMPORTANT: Widths[] is indexed by the ORIGINAL PDF byte code, NOT by the
+      // Unicode codepoint of the decoded character.  Iterating over the decoded
+      // text string and using ch.charCodeAt(0) gives wrong indices for any font
+      // that uses a non-identity encoding (ligatures, custom encoding, etc.).
+      // We therefore iterate over the raw bytes in parallel.
+      const bytes = rawTokenToBytes(rawToken)
+      if (!bytes.length) return
 
       const { cssFamily, bold, italic } = fontNameToStyle(fontEntry?.base_font)
       const family = loadedFontFamilies.get(ts.fontName) ?? cssFamily
+
+      const widths    = fontEntry?.widths ?? null
+      const firstChar = fontEntry?.first_char ?? 0
+      const cmap      = fontEntry?.cmap ?? null
+      const doFill   = ts.renderMode !== 3 && (ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6)
+      const doStroke = ts.renderMode !== 3 && (ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6)
 
       ctx.save()
       ctx.transform(a, b, c, d, e, f)
@@ -406,25 +383,39 @@ function renderOps(
         ? `1px ${family}`
         : `${italic ? 'italic' : 'normal'} ${bold ? 'bold' : 'normal'} 1px ${family}`
       ctx.font = fontStyle
-      if (ts.renderMode !== 3) {
-        const fill   = ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6
-        const stroke = ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6
-        if (fill)   { ctx.fillStyle   = gs.fillColor;   ctx.fillText(text, 0, 0) }
-        if (stroke) { ctx.strokeStyle = gs.strokeColor; ctx.strokeText(text, 0, 0) }
-      }
-      ctx.restore()
+      ctx.fillStyle   = gs.fillColor
+      ctx.strokeStyle = gs.strokeColor
 
-      // Advance text matrix using /Widths; fall back to rough estimate
-      const widths    = fontEntry?.widths ?? null
-      const firstChar = fontEntry?.first_char ?? 0
-      let adv = 0
-      for (const ch of text) {
-        const code = ch.charCodeAt(0)
-        const w0 = (widths && code >= firstChar && code < firstChar + widths.length)
-          ? widths[code - firstChar] / 1000
-          : ch === ' ' ? 0.25 : 0.55
-        adv += (w0 * ts.fontSize + ts.charSpacing + (ch === ' ' ? ts.wordSpacing : 0)) * hs
+      // xPos in glyph-space canvas units (1 unit = em = fontSize text-space units * hs)
+      // adv  in text-space units for ts.tm update
+      let xPos = 0
+      let adv  = 0
+
+      for (const b of bytes) {
+        // Resolve the Unicode glyph string for this PDF byte code
+        const charStr = cmap?.[b] !== undefined
+          ? cmap[b]
+          : (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : '')
+
+        if (charStr) {
+          if (doFill)   ctx.fillText(charStr, xPos, 0)
+          if (doStroke) ctx.strokeText(charStr, xPos, 0)
+        }
+
+        // Width lookup: use the PDF byte code b (not Unicode charCode) as the index
+        const w0 = (widths && b >= firstChar && b < firstChar + widths.length)
+          ? widths[b - firstChar] / 1000
+          : (b === 0x20 ? 0.25 : 0.55)
+
+        const isSpace = b === 0x20
+        const stepX = w0
+          + (ts.fontSize > 0 ? ts.charSpacing / ts.fontSize : 0)
+          + (isSpace && ts.fontSize > 0 ? ts.wordSpacing / ts.fontSize : 0)
+        xPos += stepX
+        adv  += stepX * ts.fontSize * hs
       }
+
+      ctx.restore()
       ts.tm = matMul([1, 0, 0, 1, adv, 0], ts.tm)
     }
   }
@@ -678,7 +669,7 @@ async function compositeWithSMask(
   return off
 }
 
-const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
+const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef   = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
@@ -813,6 +804,17 @@ const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
     })
   }, [data, uploadId])
 
+  useImperativeHandle(ref, () => ({
+    savePng() {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const link = document.createElement('a')
+      link.download = 'page-render.png'
+      link.href = canvas.toDataURL('image/png')
+      link.click()
+    }
+  }))
+
   return (
     <div className="cs-render-outer">
       <div ref={wrapRef} className="cs-render-wrap">
@@ -822,6 +824,6 @@ const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
       </div>
     </div>
   )
-}
+})
 
 export default CsCanvasRenderer
