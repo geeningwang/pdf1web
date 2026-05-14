@@ -18,6 +18,7 @@
 import React, { useRef, useEffect, useState } from 'react'
 import type { ContentStreamData, CsOperand } from '../api'
 import { imageUrl } from '../api'
+import * as opentype from 'opentype.js'
 
 interface Props {
   data: ContentStreamData
@@ -119,7 +120,19 @@ function decodePdfStringWithFont(raw: string, font: FontRes): string {
 
   return raw
 }
-
+/** Extract raw byte values from a PDF string token (literal or hex). */
+function rawTokenToBytes(rawToken: string): number[] {
+  if (rawToken.startsWith('(') && rawToken.endsWith(')')) {
+    return unescapePdfLiteralToBytes(rawToken.slice(1, -1))
+  }
+  if (rawToken.startsWith('<') && rawToken.endsWith('>')) {
+    const hex = rawToken.slice(1, -1).replace(/\s/g, '')
+    const bytes: number[] = []
+    for (let i = 0; i + 1 < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16))
+    return bytes
+  }
+  return []
+}
 // ── TJ array parser ─────────────────────────────────────────────────────────
 
 /** Items in a TJ array; strings kept as raw PDF tokens for font-aware decode. */
@@ -278,6 +291,8 @@ function renderOps(
   data: ContentStreamData,
   loadedImages: Map<string, HTMLImageElement | HTMLCanvasElement>,
   loadedFontFamilies: Map<string, string>,
+  loadedOtFonts: Map<string, opentype.Font>,
+  cidToGidMaps: Map<string, Uint16Array | null>,
 ): void {
   const fontResources = data.resources?.font ?? {}
   const curFont = (): FontRes => fontResources[ts.fontName]
@@ -298,43 +313,105 @@ function renderOps(
     ctx.lineDashOffset = gs.dashPhase
   }
 
-  // Show a string in the current text state
-  function showText(text: string): void {
-    if (!text) return
+  // Show a raw PDF string token using the current text state.
+  // For Type0 fonts with an embedded OpenType font: renders by GlyphID via opentype.js.
+  // Fallback: decodes to Unicode and uses ctx.fillText.
+  function showText(rawToken: string): void {
+    if (!rawToken) return
     const [a, b, c, d, e, f] = ts.tm
     const fontEntry = curFont()
-    const { cssFamily, bold, italic } = fontNameToStyle(fontEntry?.base_font)
-    // Prefer the embedded font loaded from the PDF; fall back to CSS font stack
-    const family = loadedFontFamilies.get(ts.fontName) ?? cssFamily
     const hs = ts.hScale / 100
-    ctx.save()
-    ctx.transform(a, b, c, d, e, f)
-    // Scale by font size; negate Y to undo the coordinate-system Y-flip.
-    ctx.transform(ts.fontSize * hs, 0, 0, -ts.fontSize, 0, ts.rise)
-    const fontStyle = loadedFontFamilies.has(ts.fontName)
-      ? `1px ${family}`
-      : `${italic ? 'italic' : 'normal'} ${bold ? 'bold' : 'normal'} 1px ${family}`
-    ctx.font = fontStyle
-    if (ts.renderMode !== 3) {  // 3 = invisible
-      const fill   = ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6
-      const stroke = ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6
-      if (fill)   { ctx.fillStyle   = gs.fillColor;   ctx.fillText(text, 0, 0) }
-      if (stroke) { ctx.strokeStyle = gs.strokeColor; ctx.strokeText(text, 0, 0) }
-    }
-    ctx.restore()
 
-    // Advance text matrix using actual /Widths; fall back to rough estimate
-    const widths    = fontEntry?.widths ?? null
-    const firstChar = fontEntry?.first_char ?? 0
-    let adv = 0
-    for (const ch of text) {
-      const code = ch.charCodeAt(0)
-      const w0 = (widths && code >= firstChar && code < firstChar + widths.length)
-        ? widths[code - firstChar] / 1000
-        : ch === ' ' ? 0.25 : 0.55
-      adv += (w0 * ts.fontSize + ts.charSpacing + (ch === ' ' ? ts.wordSpacing : 0)) * hs
+    const otFont = loadedOtFonts.get(ts.fontName)
+    const useOT  = otFont !== undefined && fontEntry?.subtype === 'Type0'
+
+    if (useOT && otFont) {
+      // ── OpenType.js path (CID fonts with embedded binary) ───────────────────
+      const bytes = rawTokenToBytes(rawToken)
+      if (bytes.length < 2) return
+      const cidMap = cidToGidMaps.get(ts.fontName)  // null = Identity
+      const doFill   = ts.renderMode !== 3 && (ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6)
+      const doStroke = ts.renderMode !== 3 && (ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6)
+
+      ctx.save()
+      ctx.transform(a, b, c, d, e, f)
+      ctx.transform(ts.fontSize * hs, 0, 0, -ts.fontSize, 0, ts.rise)
+      ctx.fillStyle   = gs.fillColor
+      ctx.strokeStyle = gs.strokeColor
+
+      let xPos = 0
+      let advTotal = 0
+
+      for (let i = 0; i + 1 < bytes.length; i += 2) {
+        const cid = (bytes[i] << 8) | bytes[i + 1]
+        const gid = (cidMap === null || cidMap === undefined)
+          ? cid
+          : (cid < cidMap.length ? cidMap[cid] : 0)
+
+        let glyph: opentype.Glyph | undefined
+        try { glyph = otFont.glyphs.get(gid) } catch { /* skip invalid GID */ }
+
+        if ((doFill || doStroke) && glyph) {
+          const otPath = glyph.getPath(xPos, 0, 1)
+          ctx.beginPath()
+          for (const cmd of otPath.commands) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const c = cmd as any
+            if      (cmd.type === 'M') ctx.moveTo(c.x, c.y)
+            else if (cmd.type === 'L') ctx.lineTo(c.x, c.y)
+            else if (cmd.type === 'C') ctx.bezierCurveTo(c.x1, c.y1, c.x2, c.y2, c.x, c.y)
+            else if (cmd.type === 'Q') ctx.quadraticCurveTo(c.x1, c.y1, c.x, c.y)
+            else if (cmd.type === 'Z') ctx.closePath()
+          }
+          if (doFill)   ctx.fill('nonzero')
+          if (doStroke) ctx.stroke()
+        }
+
+        // Advance: advW in em units; charSpacing in text space → glyph space
+        const advW_em = (glyph?.advanceWidth ?? otFont.unitsPerEm) / otFont.unitsPerEm
+        xPos     += advW_em + (ts.fontSize > 0 ? ts.charSpacing / ts.fontSize : 0)
+        advTotal += (advW_em * ts.fontSize + ts.charSpacing) * hs
+      }
+
+      ctx.restore()
+      ts.tm = matMul([1, 0, 0, 1, advTotal, 0], ts.tm)
+
+    } else {
+      // ── Fallback: decode to Unicode + ctx.fillText ──────────────────────────
+      const text = decodePdfStringWithFont(rawToken, fontEntry)
+      if (!text) return
+
+      const { cssFamily, bold, italic } = fontNameToStyle(fontEntry?.base_font)
+      const family = loadedFontFamilies.get(ts.fontName) ?? cssFamily
+
+      ctx.save()
+      ctx.transform(a, b, c, d, e, f)
+      ctx.transform(ts.fontSize * hs, 0, 0, -ts.fontSize, 0, ts.rise)
+      const fontStyle = loadedFontFamilies.has(ts.fontName)
+        ? `1px ${family}`
+        : `${italic ? 'italic' : 'normal'} ${bold ? 'bold' : 'normal'} 1px ${family}`
+      ctx.font = fontStyle
+      if (ts.renderMode !== 3) {
+        const fill   = ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6
+        const stroke = ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6
+        if (fill)   { ctx.fillStyle   = gs.fillColor;   ctx.fillText(text, 0, 0) }
+        if (stroke) { ctx.strokeStyle = gs.strokeColor; ctx.strokeText(text, 0, 0) }
+      }
+      ctx.restore()
+
+      // Advance text matrix using /Widths; fall back to rough estimate
+      const widths    = fontEntry?.widths ?? null
+      const firstChar = fontEntry?.first_char ?? 0
+      let adv = 0
+      for (const ch of text) {
+        const code = ch.charCodeAt(0)
+        const w0 = (widths && code >= firstChar && code < firstChar + widths.length)
+          ? widths[code - firstChar] / 1000
+          : ch === ' ' ? 0.25 : 0.55
+        adv += (w0 * ts.fontSize + ts.charSpacing + (ch === ' ' ? ts.wordSpacing : 0)) * hs
+      }
+      ts.tm = matMul([1, 0, 0, 1, adv, 0], ts.tm)
     }
-    ts.tm = matMul([1, 0, 0, 1, adv, 0], ts.tm)
   }
 
   // Colour helpers that also set on ctx immediately
@@ -522,27 +599,26 @@ function renderOps(
 
       // ── Text show ────────────────────────────────────────────────────────
       case 'Tj':
-        if (ops.length >= 1) showText(decodePdfStringWithFont(ops[ops.length - 1].value, curFont()))
+        if (ops.length >= 1) showText(ops[ops.length - 1].value)
         break
       case "'":
         ts.tlm = matMul([1, 0, 0, 1, 0, -ts.leading], ts.tlm)
         ts.tm  = [...ts.tlm]
-        if (ops.length >= 1) showText(decodePdfStringWithFont(ops[ops.length - 1].value, curFont()))
+        if (ops.length >= 1) showText(ops[ops.length - 1].value)
         break
       case '"':
         if (ops.length >= 3) {
           ts.wordSpacing = asNum(ops[0]); ts.charSpacing = asNum(ops[1])
           ts.tlm = matMul([1, 0, 0, 1, 0, -ts.leading], ts.tlm)
           ts.tm  = [...ts.tlm]
-          showText(decodePdfStringWithFont(ops[2].value, curFont()))
+          showText(ops[2].value)
         }
         break
       case 'TJ':
         if (ops.length >= 1 && ops[0].type === 'array') {
-          const f = curFont()
           for (const item of parseTJArray(ops[0].value)) {
             if (item.kind === 'str') {
-              showText(decodePdfStringWithFont(item.raw, f))
+              showText(item.raw)
             } else {
               // Displacement in 1/1000 text-unit; negative = move right
               const dx = -(item.value / 1000) * ts.fontSize * (ts.hScale / 100)
@@ -629,25 +705,50 @@ const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
     const xobjectRes = data.resources?.xobject ?? {}
     const fontRes    = data.resources?.font    ?? {}
 
-    // ── 1. Load embedded fonts via FontFace API ──────────────────────────
-    const loadedFontFamilies = new Map<string, string>()  // pdf resource name → CSS family name
+    // ── 1. Load embedded fonts ───────────────────────────────────────────
+    const loadedFontFamilies = new Map<string, string>()    // non-CID FontFace fallback
+    const loadedOtFonts      = new Map<string, opentype.Font>()  // CID fonts via opentype.js
+    const cidToGidMaps       = new Map<string, Uint16Array | null>()  // CIDToGIDMap per font
     const fontPromises = Object.entries(fontRes)
       .filter(([, f]) => f.font_file_num !== null)
-      .map(([name, f]) =>
-        fetch(`/api/ttf_raw/${uploadId}/${f.font_file_num}/${f.font_file_gen}`)
-          .then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error(`HTTP ${r.status}`)))
-          .then(buf => {
-            // Use a unique family name to avoid clashing with system fonts
+      .map(async ([name, f]) => {
+        try {
+          const r = await fetch(`/api/ttf_raw/${uploadId}/${f.font_file_num}/${f.font_file_gen}`)
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          const buf = await r.arrayBuffer()
+
+          if (f.subtype === 'Type0') {
+            // ── OpenType.js path for CID/Type0 fonts ──────────────────────
+            const font = opentype.parse(buf)
+            loadedOtFonts.set(name, font)
+            // CIDToGIDMap: null entry means Identity (CID = GID directly)
+            if (f.cid_to_gid_identity || f.cid_to_gid_num === null) {
+              cidToGidMaps.set(name, null)
+            } else {
+              const r2 = await fetch(`/api/raw_stream/${uploadId}/${f.cid_to_gid_num}/${f.cid_to_gid_gen}`)
+              if (r2.ok) {
+                const raw = new Uint8Array(await r2.arrayBuffer())
+                const n   = Math.floor(raw.length / 2)
+                const arr = new Uint16Array(n)
+                for (let i = 0; i < n; i++) arr[i] = (raw[2 * i] << 8) | raw[2 * i + 1]
+                cidToGidMaps.set(name, arr)
+              } else {
+                cidToGidMaps.set(name, null)   // fallback to Identity
+              }
+            }
+            console.debug(`[CsCanvas] OT font loaded: ${name} (${f.base_font})`)
+          } else {
+            // ── FontFace fallback for non-CID embedded fonts ───────────────
             const family = `PdfFont_${uploadId.slice(0, 8)}_${name}`
             const face = new FontFace(family, buf)
-            return face.load().then(loaded => {
-              document.fonts.add(loaded)
-              loadedFontFamilies.set(name, family)
-              console.debug(`[CsCanvas] embedded font loaded: ${name} → ${family}`)
-            })
-          })
-          .catch(err => { console.warn(`[CsCanvas] font load failed for ${name}:`, err) })
-      )
+            await face.load()
+            document.fonts.add(face)
+            loadedFontFamilies.set(name, family)
+          }
+        } catch (err) {
+          console.warn(`[CsCanvas] font load failed for ${name}:`, err)
+        }
+      })
 
     // ── 2. Load images (with SMask compositing) ──────────────────────────
     const loadedImages = new Map<string, HTMLImageElement | HTMLCanvasElement>()
@@ -680,7 +781,7 @@ const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
 
     Promise.all([...fontPromises, ...imagePromises]).then(() => {
       try {
-        renderOps(ctx, data, loadedImages, loadedFontFamilies)
+        renderOps(ctx, data, loadedImages, loadedFontFamilies, loadedOtFonts, cidToGidMaps)
         setStatus('done')
       } catch (err) {
         setStatus('error')

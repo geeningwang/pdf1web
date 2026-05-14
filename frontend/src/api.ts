@@ -287,6 +287,9 @@ export interface ContentStreamData {
       cmap: Record<number, string> | null
       font_file_num: number | null
       font_file_gen: number | null
+      cid_to_gid_identity: boolean
+      cid_to_gid_num: number | null
+      cid_to_gid_gen: number | null
     }>
   }
   media_box?: [number, number, number, number] | null

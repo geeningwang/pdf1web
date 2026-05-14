@@ -641,7 +641,9 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                                                   'base_font': None, 'subtype': None,
                                                   'first_char': 0, 'last_char': 255,
                                                   'widths': None,
-                                                  'font_file_num': None, 'font_file_gen': None}
+                                                  'font_file_num': None, 'font_file_gen': None,
+                                                  'cid_to_gid_identity': False,
+                                                  'cid_to_gid_num': None, 'cid_to_gid_gen': None}
                     font_res = doc.resolve_num(val.ref.num, val.ref.gen)
                     if font_res is not None and font_res.is_dict():
                         bf = font_res.get('BaseFont')
@@ -691,6 +693,22 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                                         _find_font_file(df0_obj)
                                 elif df0.is_dict():
                                     _find_font_file(df0)
+                        # CIDToGIDMap — DescendantFonts[0].CIDToGIDMap, for OpenType.js glyph rendering
+                        _df = font_res.get('DescendantFonts')
+                        if _df.is_array() and _df.arr:
+                            _df0 = _df.arr[0]
+                            _df0_obj: 'PdfObject | None' = None
+                            if _df0.is_ref():
+                                _df0_obj = doc.resolve_num(_df0.ref.num, _df0.ref.gen)
+                            elif _df0.is_dict():
+                                _df0_obj = _df0
+                            if _df0_obj is not None and _df0_obj.is_dict():
+                                _cgm = _df0_obj.get('CIDToGIDMap')
+                                if _cgm.is_name() and _cgm.sval == 'Identity':
+                                    font_meta['cid_to_gid_identity'] = True
+                                elif _cgm.is_ref():
+                                    font_meta['cid_to_gid_num'] = _cgm.ref.num
+                                    font_meta['cid_to_gid_gen'] = _cgm.ref.gen
                     # Resolve /ToUnicode CMap → {char_code: unicode_char}
                     font_meta['cmap'] = None
                     tu_ref = font_res.get('ToUnicode') if font_res is not None else None
@@ -1110,6 +1128,21 @@ def _ensure_ttf_required_tables(data: bytes) -> bytes:
     old_data_start = 12 + num_tables * 16
     stub_data = b"".join(b for _, b in stubs)
     return header + directory + data[old_data_start:] + stub_data
+
+
+@app.get("/api/raw_stream/{upload_id}/{num}/{gen}")
+def get_raw_stream(upload_id: str, num: int, gen: int) -> Response:
+    """Return the decoded bytes of any stream object (e.g. CIDToGIDMap)."""
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+    obj = doc.resolve_num(num, gen)
+    if obj is None or obj.type != PdfObjType.Stream:
+        raise HTTPException(404, "Object not found or not a stream")
+    data = _decode_stream(obj)
+    if data is None:
+        raise HTTPException(422, "Cannot decode stream")
+    return Response(content=data, media_type="application/octet-stream")
 
 
 @app.get("/api/ttf_raw/{upload_id}/{num}/{gen}")
