@@ -123,7 +123,6 @@ The built files are output to `frontend/dist/`. The backend serves them automati
 | `GET`  | `/api/raw_stream/{id}/{num}/{gen}` | Raw decoded stream bytes |
 | `GET`  | `/api/cid_to_gid/{id}/{num}/{gen}` | CIDToGIDMap table |
 | `GET`  | `/api/cid_set/{id}/{num}/{gen}` | CIDSet bitmap |
-| `GET`  | `/api/page_render/{id}/{num}/{gen}` | Server-side page render (PNG) |
 
 ## Session Model
 
