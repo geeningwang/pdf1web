@@ -27,6 +27,7 @@ export interface CsCanvasHandle {
 interface Props {
   data: ContentStreamData
   uploadId: string
+  maxOps?: number
 }
 
 // ── numeric helpers ─────────────────────────────────────────────────────────
@@ -274,7 +275,9 @@ function renderOps(
   loadedFontFamilies: Map<string, string>,
   loadedOtFonts: Map<string, opentype.Font>,
   cidToGidMaps: Map<string, Uint16Array | null>,
+  maxOps?: number,
 ): void {
+  const ops = maxOps !== undefined ? data.operations.slice(0, maxOps) : data.operations
   const fontResources = data.resources?.font ?? {}
   const curFont = (): FontRes => fontResources[ts.fontName]
   let gs: GState = { ...DEFAULT_GS }
@@ -355,6 +358,7 @@ function renderOps(
       }
 
       ctx.restore()
+      ctx.beginPath()  // clear stale glyph subpaths so later path-paint ops don't re-stroke them
       ts.tm = matMul([1, 0, 0, 1, advTotal, 0], ts.tm)
 
     } else {
@@ -416,6 +420,7 @@ function renderOps(
       }
 
       ctx.restore()
+      ctx.beginPath()  // clear stale glyph subpaths so later path-paint ops don't re-stroke them
       ts.tm = matMul([1, 0, 0, 1, adv, 0], ts.tm)
     }
   }
@@ -427,7 +432,7 @@ function renderOps(
   syncGS()
   ctx.beginPath()
 
-  for (const op of data.operations) {
+  for (const op of ops) {
     const ops = op.operands
 
     switch (op.op) {
@@ -669,7 +674,7 @@ async function compositeWithSMask(
   return off
 }
 
-const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId }, ref) => {
+const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, maxOps }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef   = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
@@ -795,14 +800,14 @@ const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId }, 
 
     Promise.all([...fontPromises, ...imagePromises]).then(() => {
       try {
-        renderOps(ctx, data, loadedImages, loadedFontFamilies, loadedOtFonts, cidToGidMaps)
+        renderOps(ctx, data, loadedImages, loadedFontFamilies, loadedOtFonts, cidToGidMaps, maxOps)
         setStatus('done')
       } catch (err) {
         setStatus('error')
         setErrorMsg(String(err))
       }
     })
-  }, [data, uploadId])
+  }, [data, uploadId, maxOps])
 
   useImperativeHandle(ref, () => ({
     savePng() {

@@ -92,6 +92,8 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
   // default on if media_box is available
   const [showCanvas, setShowCanvas] = useState(canRender)
   const rendererRef = useRef<CsCanvasHandle>(null)
+  const [partialInput, setPartialInput] = useState('')
+  const [maxOps, setMaxOps] = useState<number | undefined>(undefined)
 
   return (
     <div className="cs-pane">
@@ -103,7 +105,7 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
           {data.truncated ? ` (parsed first ${data.operations.length.toLocaleString()})` : ''}
         </span>
         {canRender && (
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center' }}>
             <button
               className={`cs-render-toggle${showCanvas ? ' active' : ''}`}
               onClick={() => setShowCanvas(v => !v)}
@@ -112,13 +114,41 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
               {showCanvas ? 'Hide render' : 'Show render'}
             </button>
             {showCanvas && (
-              <button
-                className="cs-render-toggle"
-                onClick={() => rendererRef.current?.savePng()}
-                title="Save rendered page as PNG"
-              >
-                Save to PNG
-              </button>
+              <>
+                <input
+                  type="number"
+                  min={1}
+                  max={data.total_ops}
+                  placeholder={`1–${data.total_ops}`}
+                  value={partialInput}
+                  onChange={e => setPartialInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const n = parseInt(partialInput, 10)
+                      setMaxOps(n > 0 ? n : undefined)
+                    }
+                  }}
+                  style={{ width: '80px', fontSize: '12px', padding: '2px 4px' }}
+                  title="Number of operators to render"
+                />
+                <button
+                  className="cs-render-toggle"
+                  onClick={() => {
+                    const n = parseInt(partialInput, 10)
+                    setMaxOps(n > 0 ? n : undefined)
+                  }}
+                  title="Render only the first N operators"
+                >
+                  Partial Render
+                </button>
+                <button
+                  className="cs-render-toggle"
+                  onClick={() => rendererRef.current?.savePng()}
+                  title="Save rendered page as PNG"
+                >
+                  Save to PNG
+                </button>
+              </>
             )}
           </div>
         )}
@@ -126,7 +156,7 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
 
       {/* Canvas renderer */}
       {canRender && showCanvas && (
-        <CsCanvasRenderer ref={rendererRef} data={data} uploadId={uploadId!} />
+        <CsCanvasRenderer ref={rendererRef} data={data} uploadId={uploadId!} maxOps={maxOps} />
       )}
 
       {/* Structure bar */}
