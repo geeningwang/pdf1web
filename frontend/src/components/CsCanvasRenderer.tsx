@@ -690,15 +690,23 @@ const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
     }
 
     const containerW = wrapRef.current?.clientWidth ?? 800
-    const scale = containerW / pdfW
-    canvas.width  = containerW
-    canvas.height = Math.round(pdfH * scale)
+    const dpr = window.devicePixelRatio || 1
+    // 1 PDF point = 1/72 inch; browser 100% zoom = 96 CSS px/inch → scale = 96/72
+    const CSS_PX_PER_PT = 96 / 72
+    const cssW = Math.min(pdfW * CSS_PX_PER_PT, containerW)
+    const scale = cssW / pdfW
+
+    // Canvas backing store is scaled by DPR for crispness; CSS size matches natural size
+    canvas.width  = Math.round(cssW * dpr)
+    canvas.height = Math.round(pdfH * scale * dpr)
+    canvas.style.width  = `${cssW}px`
+    canvas.style.height = `${Math.round(pdfH * scale)}px`
 
     const ctx = canvas.getContext('2d')!
     ctx.fillStyle = 'white'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    ctx.setTransform(scale, 0, 0, -scale, -x0 * scale, y1 * scale)
+    ctx.setTransform(scale * dpr, 0, 0, -scale * dpr, -x0 * scale * dpr, y1 * scale * dpr)
 
     setStatus('loading')
 
