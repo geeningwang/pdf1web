@@ -984,6 +984,10 @@ html, body, #root {
   display: inline-block;  /* shrink-wrap to canvas size */
   max-width: calc(100% - 16px);
 }
+.cs-render-outer {
+  text-align: center;
+  width: 100%;
+}
 .cs-render-canvas {
   display: block;
   /* width/height set inline by the renderer — do not override */

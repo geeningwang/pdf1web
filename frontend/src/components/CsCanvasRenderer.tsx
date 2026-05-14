@@ -799,10 +799,12 @@ const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
   }, [data, uploadId])
 
   return (
-    <div ref={wrapRef} className="cs-render-wrap">
-      {status === 'loading' && <div className="cs-render-overlay">Rendering…</div>}
-      {status === 'error'   && <div className="cs-render-error">{errorMsg}</div>}
-      <canvas ref={canvasRef} className="cs-render-canvas" />
+    <div className="cs-render-outer">
+      <div ref={wrapRef} className="cs-render-wrap">
+        {status === 'loading' && <div className="cs-render-overlay">Rendering…</div>}
+        {status === 'error'   && <div className="cs-render-error">{errorMsg}</div>}
+        <canvas ref={canvasRef} className="cs-render-canvas" />
+      </div>
     </div>
   )
 }
