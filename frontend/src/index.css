@@ -981,11 +981,12 @@ html, body, #root {
   border-radius: 4px;
   overflow: hidden;
   background: white;
+  display: inline-block;  /* shrink-wrap to canvas size */
+  max-width: calc(100% - 16px);
 }
 .cs-render-canvas {
   display: block;
-  width: 100%;
-  height: auto;
+  /* width/height set inline by the renderer — do not override */
 }
 .cs-render-overlay {
   position: absolute;
