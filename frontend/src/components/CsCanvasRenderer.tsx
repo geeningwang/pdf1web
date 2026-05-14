@@ -689,7 +689,7 @@ const CsCanvasRenderer: React.FC<Props> = ({ data, uploadId }) => {
       return
     }
 
-    const containerW = wrapRef.current?.clientWidth ?? 800
+    const containerW = (wrapRef.current?.parentElement ?? wrapRef.current)?.clientWidth ?? 800
     const dpr = window.devicePixelRatio || 1
     // 1 PDF point = 1/72 inch; browser 100% zoom = 96 CSS px/inch → scale = 96/72
     const CSS_PX_PER_PT = 96 / 72
