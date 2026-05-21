@@ -53,6 +53,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
   const [error, setError] = useState<string | null>(null)
   const [imageError, setImageError] = useState<string | null>(null)
   const [isImageResolved, setIsImageResolved] = useState(false)
+  const [isThumb, setIsThumb] = useState(false)
   const [iccData, setIccData] = useState<IccData | null>(null)
   const [imageDetail, setImageDetail] = useState<ImageDetailData | null>(null)
   const [contentStreamData, setContentStreamData] = useState<ContentStreamData | null>(null)
@@ -75,6 +76,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
 
     const isImageNode = node.is_image && node.obj_num >= 0 && uploadId !== null
     setIsImageResolved(isImageNode)
+    setIsThumb(false)
     setImageError(null)
     setIccData(null)
     setImageDetail(null)
@@ -107,6 +109,9 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
         setLoading(false)
         if (resp.is_image && !isImageNode) {
           setIsImageResolved(true)
+        }
+        if (resp.is_thumb) {
+          setIsThumb(true)
         }
         if (resp.is_icc_profile) {
           fetchIccProfile(uploadId, node.obj_num, node.gen_num)
@@ -216,12 +221,15 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
 
             {canShowImage && (
               <div className="detail-image-section">
+                {isThumb && (
+                  <div className="detail-thumb-label">Page Thumbnail</div>
+                )}
                 {imageError
                   ? <div className="detail-error">{imageError}</div>
                   : (
                     <img
                       src={imageUrl(uploadId!, node.obj_num, node.gen_num)}
-                      alt="XObject image"
+                      alt={isThumb ? 'Page thumbnail' : 'XObject image'}
                       className="detail-image"
                       onError={() =>
                         setImageError('Image could not be rendered (unsupported pixel format or filter)')

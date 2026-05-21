@@ -127,6 +127,12 @@ def _detail(obj: PdfObject, indent: int = 0) -> str:
             if v.type == PdfObjType.Array:
                 inline = "[ " + "  ".join(_brief_inline(item) for item in v.arr) + " ]"
                 lines.append(pad + f"  /{k}  {inline}")
+            elif v.type == PdfObjType.Dictionary:
+                # Expand nested dicts recursively so entries like Resources/XObject
+                # are fully visible rather than showing "<< N entries >>".
+                sub_lines = _detail(v, indent + 1).split("\n")
+                lines.append(pad + f"  /{k}  " + sub_lines[0].lstrip())
+                lines.extend(sub_lines[1:])
             else:
                 lines.append(pad + f"  /{k}  {_brief(v)}")
         lines.append(pad + ">>")

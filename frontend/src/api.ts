@@ -21,6 +21,7 @@ export interface UploadResponse {
 export interface ObjectDetailResponse {
   detail: string
   is_image: boolean
+  is_thumb: boolean
   is_icc_profile: boolean
   is_content_stream: boolean
   is_palette: boolean

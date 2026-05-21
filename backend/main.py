@@ -299,6 +299,7 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     detail = doc.get_object_detail(num, gen)
     obj = doc.resolve_num(num, gen)
     is_image = False
+    is_thumb = False
     is_icc_profile = False
     is_content_stream = False
     is_palette = False
@@ -362,10 +363,22 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
             if (parent and parent.is_array() and len(parent.arr) >= 4
                     and parent.arr[0].is_name() and parent.arr[0].sval == "Indexed"):
                 is_palette = True
+        # Page thumbnail: Page.Thumb → image stream (no /Subtype /Image required)
+        if kp == "Thumb":
+            is_thumb = True
+
+    # Thumb images lack /Subtype /Image but are fully renderable via /api/image
+    if is_thumb:
+        is_image = True
+        if image_filter is None and obj and obj.type == PdfObjType.Stream:
+            fobj2 = obj.get("Filter")
+            if fobj2.is_name():
+                image_filter = fobj2.sval
 
     return {
         "detail": detail,
         "is_image": is_image,
+        "is_thumb": is_thumb,
         "is_icc_profile": is_icc_profile,
         "is_content_stream": is_content_stream,
         "is_palette": is_palette,
@@ -1549,10 +1562,6 @@ def _ccitt_fax_to_png(obj: Any) -> bytes | None:
 
     try:
         img = Image.open(io.BytesIO(tiff_bytes))
-        # CCITT G4 data in PDF is encoded bottom-row-first (PDF image origin is
-        # lower-left).  PDF viewers compensate with a negative-d CTM; we must
-        # apply the same vertical flip here so the image appears right-side up.
-        img = img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
         raw_pixels = img.convert("L").tobytes()
     except Exception:
         return None
