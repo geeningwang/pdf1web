@@ -632,22 +632,68 @@ class PdfDocument:
             detail=f"PDF version: {self._version}\nFile: {self._file_path}",
         )
 
-        # --- Header ---
+        # --- Header ---  (physical position: start of file)
         hdr = PdfNode(label="Header", detail=f"PDF version: {self._version}")
         hdr.children.append(
             PdfNode(label=f"Version: {self._version}", detail=self._version)
         )
         root.children.append(hdr)
 
-        # --- Trailer ---
-        tr_node = PdfNode(label="Trailer", detail=_detail(self._trailer))
-        if self._trailer.is_dict():
-            for k, v in self._trailer.dict.items():
-                lbl = f"/{k}  {_brief(v)}"
-                tr_node.children.append(self._build_value_node(lbl, v, 1))
-        root.children.append(tr_node)
+        # --- Catalog ---  (physical position: body, after header)
+        root_ref = self._trailer.get("Root")
+        if root_ref.is_ref():
+            cat_node = self._build_object_node(
+                root_ref.ref.num,
+                root_ref.ref.gen,
+                "Catalog",
+                1,
+            )
+            cat_node.label = "Catalog"
+            root.children.append(cat_node)
 
-        # --- XRef Table ---
+            cat = self.resolve_num(root_ref.ref.num)
+            if cat:
+                pages_ref = cat.get("Pages")
+                if pages_ref.is_ref():
+                    pages = self.resolve_num(pages_ref.ref.num)
+                    if pages:
+                        count_obj = pages.get("Count")
+                        pages_node = PdfNode(
+                            label="Page Tree",
+                            detail=(
+                                f"Pages node ({count_obj.ival if count_obj.is_int() else '?'} pages)\n"
+                                + _detail(pages)
+                            ),
+                            obj_num=pages_ref.ref.num,
+                        )
+                        kids = pages.get("Kids")
+                        if kids.is_array():
+                            page_num = 1
+                            for kid_ref in kids.arr:
+                                if not kid_ref.is_ref():
+                                    continue
+                                lbl = f"Page {page_num}  ({kid_ref.ref.num} 0 R)"
+                                page_num += 1
+                                pages_node.children.append(
+                                    self._build_object_node(
+                                        kid_ref.ref.num, kid_ref.ref.gen, lbl, 2
+                                    )
+                                )
+                        root.children.append(pages_node)
+
+        # --- Info dictionary ---  (physical position: body)
+        info_ref = self._trailer.get("Info")
+        if info_ref.is_ref():
+            info_node = self._build_object_node(
+                info_ref.ref.num,
+                info_ref.ref.gen,
+                f"{info_ref.ref.num} {info_ref.ref.gen} obj  [Info]",
+                1,
+            )
+            info_node.label = "Info"
+            root.children.append(info_node)
+
+        # --- XRef Table ---  (physical position: near end of file)
         entries = self._xref.entries
         in_use = sum(1 for e in entries.values() if e.etype == XrefEntryType.InUse)
         free = sum(1 for e in entries.values() if e.etype == XrefEntryType.Free)
@@ -682,58 +728,13 @@ class PdfDocument:
             xref_node.children.append(en)
         root.children.append(xref_node)
 
-        # --- Catalog ---
-        root_ref = self._trailer.get("Root")
-        if root_ref.is_ref():
-            cat_node = self._build_object_node(
-                root_ref.ref.num,
-                root_ref.ref.gen,
-                f"{root_ref.ref.num} {root_ref.ref.gen} obj  [Catalog]",
-                1,
-            )
-            root.children.append(cat_node)
-
-            cat = self.resolve_num(root_ref.ref.num)
-            if cat:
-                pages_ref = cat.get("Pages")
-                if pages_ref.is_ref():
-                    pages = self.resolve_num(pages_ref.ref.num)
-                    if pages:
-                        count_obj = pages.get("Count")
-                        pages_node = PdfNode(
-                            label="Pages",
-                            detail=(
-                                f"Pages node ({count_obj.ival if count_obj.is_int() else '?'} pages)\n"
-                                + _detail(pages)
-                            ),
-                            obj_num=pages_ref.ref.num,
-                        )
-                        kids = pages.get("Kids")
-                        if kids.is_array():
-                            page_num = 1
-                            for kid_ref in kids.arr:
-                                if not kid_ref.is_ref():
-                                    continue
-                                lbl = f"Page {page_num}  ({kid_ref.ref.num} 0 R)"
-                                page_num += 1
-                                pages_node.children.append(
-                                    self._build_object_node(
-                                        kid_ref.ref.num, kid_ref.ref.gen, lbl, 2
-                                    )
-                                )
-                        root.children.append(pages_node)
-
-        # --- Info dictionary ---
-        info_ref = self._trailer.get("Info")
-        if info_ref.is_ref():
-            info_node = self._build_object_node(
-                info_ref.ref.num,
-                info_ref.ref.gen,
-                f"{info_ref.ref.num} {info_ref.ref.gen} obj  [Info]",
-                1,
-            )
-            info_node.label = "Info"
-            root.children.append(info_node)
+        # --- Trailer ---  (physical position: end of file)
+        tr_node = PdfNode(label="Trailer", detail=_detail(self._trailer))
+        if self._trailer.is_dict():
+            for k, v in self._trailer.dict.items():
+                lbl = f"/{k}  {_brief(v)}"
+                tr_node.children.append(self._build_value_node(lbl, v, 1))
+        root.children.append(tr_node)
 
         return root
 
