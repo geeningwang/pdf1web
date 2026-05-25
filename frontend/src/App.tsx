@@ -6,9 +6,20 @@ import DetailPane from './components/DetailPane'
 import Toolbar from './components/Toolbar'
 import TreePane from './components/TreePane'
 
-function buildObjMap(node: TreeNode, map: Map<number, TreeNode>) {
-  if (node.obj_num >= 0) map.set(node.obj_num, node)
-  for (const child of node.children) buildObjMap(child, map)
+function buildObjMap(node: TreeNode, map: Map<number, TreeNode>, depth = 0) {
+  // Skip stub reference nodes (detail = "Reference: N G R\n\n...") so they
+  // never overwrite the real object entries (e.g. XRef Table > obj N).
+  if (node.obj_num >= 0 && !node.detail.startsWith('Reference:')) {
+    map.set(node.obj_num, node)
+  }
+  // Map named section nodes to sentinel keys for backref navigation
+  if (depth === 1) {
+    if (node.label === 'Trailer')   map.set(-1, node)
+    if (node.label === 'Catalog')   map.set(-2, node)
+    if (node.label === 'Page Tree') map.set(-3, node)
+    if (node.label === 'Info')      map.set(-4, node)
+  }
+  for (const child of node.children) buildObjMap(child, map, depth + 1)
 }
 
 function buildParentMap(node: TreeNode, map: Map<TreeNode, TreeNode>, parent: TreeNode | null = null) {

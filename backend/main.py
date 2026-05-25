@@ -71,17 +71,34 @@ def _build_backref_index(doc: PdfDocument) -> dict[int, list[dict]]:
     from pdf.xref import XrefEntryType
     index: dict[int, list[dict]] = {}
 
+    # --- 1. Named logical nodes (tree order: Catalog, Page Tree, Info) ---
+    trailer = doc._trailer
+    root_ref = trailer.get("Root")
+    if root_ref.is_ref():
+        tgt = root_ref.ref.num
+        index.setdefault(tgt, []).append(
+            {"from_num": -2, "from_gen": 0, "key_path": "", "type_name": "Catalog"})
+        cat = doc.resolve_num(root_ref.ref.num)
+        if cat:
+            pages_ref = cat.get("Pages")
+            if pages_ref.is_ref():
+                index.setdefault(pages_ref.ref.num, []).append(
+                    {"from_num": -3, "from_gen": 0, "key_path": "", "type_name": "Page Tree"})
+    info_ref = trailer.get("Info")
+    if info_ref.is_ref():
+        index.setdefault(info_ref.ref.num, []).append(
+            {"from_num": -4, "from_gen": 0, "key_path": "", "type_name": "Info"})
+
+    # --- 2. All indirect objects ---
     for num, entry in doc._xref.entries.items():
         if entry.etype == XrefEntryType.Free:
             continue
         obj = doc.resolve_num(num, entry.gen)
         if obj is None:
             continue
-        # Get the Type name of the referencing object for display
         type_v = obj.get("Type") if (obj.is_dict() or obj.type == PdfObjType.Stream) else None
         type_name = type_v.sval if (type_v and type_v.is_name()) else obj.type.name
 
-        # BFS through dict / array values to find all outgoing references
         pending: list[tuple[Any, list[str]]] = []
         if obj.is_dict() or obj.type == PdfObjType.Stream:
             for key, val in obj.dict.items():
@@ -93,10 +110,7 @@ def _build_backref_index(doc: PdfDocument) -> dict[int, list[dict]]:
         while pending:
             cur, cur_path = pending.pop()
             if cur.type == PdfObjType.Reference:
-                tgt = cur.ref.num
-                if tgt not in index:
-                    index[tgt] = []
-                index[tgt].append({
+                index.setdefault(cur.ref.num, []).append({
                     "from_num": num,
                     "from_gen": entry.gen,
                     "key_path": ".".join(cur_path),
@@ -108,6 +122,17 @@ def _build_backref_index(doc: PdfDocument) -> dict[int, list[dict]]:
             elif cur.is_array():
                 for i, v in enumerate(cur.arr):
                     pending.append((v, cur_path + [f"[{i}]"]))
+
+    # --- 3. Trailer dictionary references (last, matches tree order) ---
+    if trailer.is_dict():
+        for key, val in trailer.dict.items():
+            if val.type == PdfObjType.Reference:
+                index.setdefault(val.ref.num, []).append({
+                    "from_num": -1,
+                    "from_gen": 0,
+                    "key_path": key,
+                    "type_name": "Trailer",
+                })
 
     return index
 

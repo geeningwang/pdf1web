@@ -195,14 +195,25 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
             {backRefs.refs.map((r, i) => (
               <span key={i} className="detail-backref-item">
                 {i > 0 && <span className="detail-backref-sep">,</span>}
-                <span
-                  className="detail-backref-link"
-                  title={`obj ${r.from_num} ${r.from_gen} R (${r.type_name}) via ${r.key_path}`}
-                  onClick={() => onJumpToObj(r.from_num)}
-                >
-                  obj {r.from_num}
-                  <span className="detail-backref-via"> via {r.key_path}</span>
-                </span>
+                {r.from_num < 0 ? (
+                  <span
+                    className="detail-backref-link"
+                    title={`Jump to ${r.type_name}`}
+                    onClick={() => onJumpToObj(r.from_num)}
+                  >
+                    {r.type_name}
+                    {r.key_path && <span className="detail-backref-via"> via {r.key_path}</span>}
+                  </span>
+                ) : (
+                  <span
+                    className="detail-backref-link"
+                    title={`obj ${r.from_num} ${r.from_gen} R (${r.type_name}) via ${r.key_path}`}
+                    onClick={() => onJumpToObj(r.from_num)}
+                  >
+                    obj {r.from_num}
+                    <span className="detail-backref-via"> via {r.key_path}</span>
+                  </span>
+                )}
               </span>
             ))}
           </div>

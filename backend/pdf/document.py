@@ -642,55 +642,36 @@ class PdfDocument:
         # --- Catalog ---  (physical position: body, after header)
         root_ref = self._trailer.get("Root")
         if root_ref.is_ref():
-            cat_node = self._build_object_node(
-                root_ref.ref.num,
-                root_ref.ref.gen,
-                "Catalog",
-                1,
+            cat_node = PdfNode(
+                label="Catalog",
+                obj_num=root_ref.ref.num,
+                gen_num=root_ref.ref.gen,
+                detail=f"Reference: {root_ref.ref.num} {root_ref.ref.gen} R\n\n(Select to load target object)",
             )
-            cat_node.label = "Catalog"
             root.children.append(cat_node)
 
+            # --- Page Tree ---  (physical position: body)
             cat = self.resolve_num(root_ref.ref.num)
             if cat:
                 pages_ref = cat.get("Pages")
                 if pages_ref.is_ref():
-                    pages = self.resolve_num(pages_ref.ref.num)
-                    if pages:
-                        count_obj = pages.get("Count")
-                        pages_node = PdfNode(
-                            label="Page Tree",
-                            detail=(
-                                f"Pages node ({count_obj.ival if count_obj.is_int() else '?'} pages)\n"
-                                + _detail(pages)
-                            ),
-                            obj_num=pages_ref.ref.num,
-                        )
-                        kids = pages.get("Kids")
-                        if kids.is_array():
-                            page_num = 1
-                            for kid_ref in kids.arr:
-                                if not kid_ref.is_ref():
-                                    continue
-                                lbl = f"Page {page_num}  ({kid_ref.ref.num} 0 R)"
-                                page_num += 1
-                                pages_node.children.append(
-                                    self._build_object_node(
-                                        kid_ref.ref.num, kid_ref.ref.gen, lbl, 2
-                                    )
-                                )
-                        root.children.append(pages_node)
+                    pages_node = PdfNode(
+                        label="Page Tree",
+                        obj_num=pages_ref.ref.num,
+                        gen_num=pages_ref.ref.gen,
+                        detail=f"Reference: {pages_ref.ref.num} {pages_ref.ref.gen} R\n\n(Select to load target object)",
+                    )
+                    root.children.append(pages_node)
 
         # --- Info dictionary ---  (physical position: body)
         info_ref = self._trailer.get("Info")
         if info_ref.is_ref():
-            info_node = self._build_object_node(
-                info_ref.ref.num,
-                info_ref.ref.gen,
-                f"{info_ref.ref.num} {info_ref.ref.gen} obj  [Info]",
-                1,
+            info_node = PdfNode(
+                label="Info",
+                obj_num=info_ref.ref.num,
+                gen_num=info_ref.ref.gen,
+                detail=f"Reference: {info_ref.ref.num} {info_ref.ref.gen} R\n\n(Select to load target object)",
             )
-            info_node.label = "Info"
             root.children.append(info_node)
 
         # --- XRef Table ---  (physical position: near end of file)
