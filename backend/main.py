@@ -336,7 +336,19 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                     not_special = not (type_obj.is_name() and type_obj.sval in ('ObjStm', 'XRef'))
                     if not_special and not _is_binary(decoded) and _is_content_stream_data(decoded):
                         is_content_stream = True
-
+    # Array of content-stream references (/Contents [11 0 R  12 0 R ...])
+    if not is_content_stream and obj and obj.is_array() and len(obj.arr) > 0:
+        from pdf.filters import flat_decode
+        for item in obj.arr[:4]:  # sample first few items
+            if item.is_ref():
+                ref_obj = doc.resolve_num(item.ref.num, item.ref.gen)
+                if ref_obj and ref_obj.type == PdfObjType.Stream:
+                    fobj = ref_obj.get("Filter")
+                    if fobj.is_name() and fobj.sval == "FlateDecode":
+                        chunk = flat_decode(ref_obj.stream_raw)
+                        if chunk and not _is_binary(chunk) and _is_content_stream_data(chunk):
+                            is_content_stream = True
+                            break
     # Reference chain detections.
     # These indices are fixed by the PDF spec:
     #   [/ICCBased  stream_ref]              → stream is always at [1]
@@ -564,16 +576,38 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         raise HTTPException(404, "Session not found")
 
     obj = doc.resolve_num(num, gen)
-    if obj is None or obj.type != PdfObjType.Stream:
-        raise HTTPException(404, "Object not found or not a stream")
+    if obj is None:
+        raise HTTPException(404, "Object not found")
 
-    fobj = obj.get("Filter")
-    if fobj.is_name() and fobj.sval == "FlateDecode":
-        decoded = flat_decode(obj.stream_raw)
-    elif fobj.is_null():
-        decoded = obj.stream_raw
+    # /Contents array: concatenate all referenced streams into one byte sequence
+    if obj.is_array():
+        chunks: list[bytes] = []
+        for item in obj.arr:
+            if item.is_ref():
+                ref_obj = doc.resolve_num(item.ref.num, item.ref.gen)
+                if ref_obj and ref_obj.type == PdfObjType.Stream:
+                    fobj2 = ref_obj.get("Filter")
+                    if fobj2.is_name() and fobj2.sval == "FlateDecode":
+                        chunk = flat_decode(ref_obj.stream_raw)
+                    elif fobj2.is_null():
+                        chunk = ref_obj.stream_raw
+                    else:
+                        chunk = None
+                    if chunk:
+                        chunks.append(chunk)
+        if not chunks:
+            raise HTTPException(422, "Array contains no decodable content streams")
+        decoded: bytes | None = b"\n".join(chunks)
+    elif obj.type == PdfObjType.Stream:
+        fobj = obj.get("Filter")
+        if fobj.is_name() and fobj.sval == "FlateDecode":
+            decoded = flat_decode(obj.stream_raw)
+        elif fobj.is_null():
+            decoded = obj.stream_raw
+        else:
+            raise HTTPException(422, "Unsupported filter for content stream")
     else:
-        raise HTTPException(422, "Unsupported filter for content stream")
+        raise HTTPException(404, "Object is not a stream or array")
 
     if decoded is None:
         raise HTTPException(422, "Failed to decode stream")
