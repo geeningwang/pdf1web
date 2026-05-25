@@ -413,6 +413,7 @@ class PdfDocument:
         self._xref = PdfXrefTable()
         self._trailer = PdfObject(type=PdfObjType.Null)
         self._version: str = ""
+        self._binary_marker: bytes | None = None
         self._file_path: str = ""
         self._object_cache: dict[int, PdfObject] = {}
         self._root: PdfNode | None = None
@@ -603,6 +604,19 @@ class PdfDocument:
             self._version += chr(data[i])
             i += 1
 
+        # Skip line ending after version, then look for optional binary marker comment
+        # (a line starting with % followed by ≥4 bytes all ≥ 0x80, per PDF spec §7.5.2)
+        while i < size and data[i] in (ord("\r"), ord("\n")):
+            i += 1
+        if i < size and data[i] == ord("%"):
+            j = i + 1
+            line_bytes: list[int] = []
+            while j < size and data[j] not in (ord("\r"), ord("\n")):
+                line_bytes.append(data[j])
+                j += 1
+            if len(line_bytes) >= 4 and all(b >= 0x80 for b in line_bytes):
+                self._binary_marker = bytes(line_bytes)
+
         # Find startxref offset (scan last 2048 bytes)
         sx_offset = self._reader.scan_backward(size, b"startxref", 2048)
         if sx_offset < 0:
@@ -637,76 +651,81 @@ class PdfDocument:
         hdr.children.append(
             PdfNode(label=f"Version: {self._version}", detail=self._version)
         )
+        if self._binary_marker is not None:
+            hex_str = self._binary_marker.hex().upper()
+            hdr.children.append(
+                PdfNode(
+                    label="Binary marker",
+                    detail=(
+                        f"Binary marker comment (PDF spec §7.5.2)\n"
+                        f"Signals that the file contains binary data.\n\n"
+                        f"Bytes: {' '.join(hex_str[k:k+2] for k in range(0, len(hex_str), 2))}"
+                    ),
+                )
+            )
         root.children.append(hdr)
 
-        # --- Catalog ---  (physical position: body, after header)
-        root_ref = self._trailer.get("Root")
-        if root_ref.is_ref():
-            cat_node = PdfNode(
-                label="Catalog",
-                obj_num=root_ref.ref.num,
-                gen_num=root_ref.ref.gen,
-                detail=f"Reference: {root_ref.ref.num} {root_ref.ref.gen} R\n\n(Select to load target object)",
-            )
-            root.children.append(cat_node)
-
-            # --- Page Tree ---  (physical position: body)
-            cat = self.resolve_num(root_ref.ref.num)
-            if cat:
-                pages_ref = cat.get("Pages")
-                if pages_ref.is_ref():
-                    pages_node = PdfNode(
-                        label="Page Tree",
-                        obj_num=pages_ref.ref.num,
-                        gen_num=pages_ref.ref.gen,
-                        detail=f"Reference: {pages_ref.ref.num} {pages_ref.ref.gen} R\n\n(Select to load target object)",
-                    )
-                    root.children.append(pages_node)
-
-        # --- Info dictionary ---  (physical position: body)
-        info_ref = self._trailer.get("Info")
-        if info_ref.is_ref():
-            info_node = PdfNode(
-                label="Info",
-                obj_num=info_ref.ref.num,
-                gen_num=info_ref.ref.gen,
-                detail=f"Reference: {info_ref.ref.num} {info_ref.ref.gen} R\n\n(Select to load target object)",
-            )
-            root.children.append(info_node)
-
-        # --- XRef Table ---  (physical position: near end of file)
+        # --- Body ---  (physical position: after header, before xref table)
         entries = self._xref.entries
         in_use = sum(1 for e in entries.values() if e.etype == XrefEntryType.InUse)
         free = sum(1 for e in entries.values() if e.etype == XrefEntryType.Free)
         compressed = sum(1 for e in entries.values() if e.etype == XrefEntryType.Compressed)
-        xref_node = PdfNode(
-            label="XRef Table",
+        body_node = PdfNode(
+            label="Body",
             detail=(
-                f"Total entries: {len(entries)}\n"
-                f"In-use: {in_use}\n"
-                f"Free:   {free}\n"
-                f"Compressed: {compressed}"
+                f"PDF body — indirect objects\n"
+                f"In-use:     {in_use}\n"
+                f"Compressed: {compressed}\n"
+                f"Free:       {free}"
             ),
         )
         for obj_num in sorted(entries):
             xe = entries[obj_num]
             if xe.etype == XrefEntryType.Free:
                 lbl = f"obj {obj_num}  [free]"
-                # Free entries have no content to fetch; keep static detail
                 en = PdfNode(
                     label=lbl,
                     detail=f"Object {obj_num} gen {xe.gen}  FREE",
-                    obj_num=-1,  # no object to resolve
+                    obj_num=-1,
                     gen_num=xe.gen,
                 )
             elif xe.etype == XrefEntryType.InUse:
                 lbl = f"obj {obj_num}  @{xe.offset}"
-                # detail="" triggers lazy fetch of real object content on click
                 en = PdfNode(label=lbl, detail="", obj_num=obj_num, gen_num=xe.gen)
             else:
                 lbl = f"obj {obj_num}  in ObjStm {xe.offset}"
                 en = PdfNode(label=lbl, detail="", obj_num=obj_num, gen_num=xe.gen)
-            xref_node.children.append(en)
+            body_node.children.append(en)
+        root.children.append(body_node)
+
+        # --- XRef Table ---  (physical position: near end of file, after body)
+        xref_lines = [
+            f"Cross-reference table",
+            f"Total entries: {len(entries)}  "
+            f"(in-use: {in_use}  free: {free}  compressed: {compressed})",
+            "",
+            "Columns:",
+            "  obj     — object number",
+            "  offset  — byte offset from start of file where the object begins",
+            "            (for free entries: object number of next free entry in the free list)",
+            "  gen     — generation number (0 for most objects; 65535 for permanently free)",
+            "  type    — n = in-use (normal object)  |  f = free (deleted/never used)",
+            "",
+            f"{'obj':>5}  {'offset':>10}  {'gen':>5}  type",
+            "-" * 36,
+        ]
+        for obj_num in sorted(entries):
+            xe = entries[obj_num]
+            if xe.etype == XrefEntryType.Free:
+                xref_lines.append(f"{obj_num:>5}  {0:010d}  {xe.gen:05d}  f")
+            elif xe.etype == XrefEntryType.InUse:
+                xref_lines.append(f"{obj_num:>5}  {xe.offset:010d}  {xe.gen:05d}  n")
+            else:
+                xref_lines.append(f"{obj_num:>5}  in ObjStm {xe.offset}")
+        xref_node = PdfNode(
+            label="XRef Table",
+            detail="\n".join(xref_lines),
+        )
         root.children.append(xref_node)
 
         # --- Trailer ---  (physical position: end of file)

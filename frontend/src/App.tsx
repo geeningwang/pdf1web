@@ -8,17 +8,12 @@ import TreePane from './components/TreePane'
 
 function buildObjMap(node: TreeNode, map: Map<number, TreeNode>, depth = 0) {
   // Skip stub reference nodes (detail = "Reference: N G R\n\n...") so they
-  // never overwrite the real object entries (e.g. XRef Table > obj N).
+  // never overwrite the real object entries (e.g. Body > obj N).
   if (node.obj_num >= 0 && !node.detail.startsWith('Reference:')) {
     map.set(node.obj_num, node)
   }
-  // Map named section nodes to sentinel keys for backref navigation
-  if (depth === 1) {
-    if (node.label === 'Trailer')   map.set(-1, node)
-    if (node.label === 'Catalog')   map.set(-2, node)
-    if (node.label === 'Page Tree') map.set(-3, node)
-    if (node.label === 'Info')      map.set(-4, node)
-  }
+  // Map the Trailer section node to sentinel key -1 for backref navigation
+  if (depth === 1 && node.label === 'Trailer') map.set(-1, node)
   for (const child of node.children) buildObjMap(child, map, depth + 1)
 }
 

@@ -71,25 +71,8 @@ def _build_backref_index(doc: PdfDocument) -> dict[int, list[dict]]:
     from pdf.xref import XrefEntryType
     index: dict[int, list[dict]] = {}
 
-    # --- 1. Named logical nodes (tree order: Catalog, Page Tree, Info) ---
+    # --- 1. All indirect objects ---
     trailer = doc._trailer
-    root_ref = trailer.get("Root")
-    if root_ref.is_ref():
-        tgt = root_ref.ref.num
-        index.setdefault(tgt, []).append(
-            {"from_num": -2, "from_gen": 0, "key_path": "", "type_name": "Catalog"})
-        cat = doc.resolve_num(root_ref.ref.num)
-        if cat:
-            pages_ref = cat.get("Pages")
-            if pages_ref.is_ref():
-                index.setdefault(pages_ref.ref.num, []).append(
-                    {"from_num": -3, "from_gen": 0, "key_path": "", "type_name": "Page Tree"})
-    info_ref = trailer.get("Info")
-    if info_ref.is_ref():
-        index.setdefault(info_ref.ref.num, []).append(
-            {"from_num": -4, "from_gen": 0, "key_path": "", "type_name": "Info"})
-
-    # --- 2. All indirect objects ---
     for num, entry in doc._xref.entries.items():
         if entry.etype == XrefEntryType.Free:
             continue
@@ -123,7 +106,7 @@ def _build_backref_index(doc: PdfDocument) -> dict[int, list[dict]]:
                 for i, v in enumerate(cur.arr):
                     pending.append((v, cur_path + [f"[{i}]"]))
 
-    # --- 3. Trailer dictionary references (last, matches tree order) ---
+    # --- 2. Trailer dictionary references (last, matches tree order) ---
     if trailer.is_dict():
         for key, val in trailer.dict.items():
             if val.type == PdfObjType.Reference:
