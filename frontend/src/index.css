@@ -1651,6 +1651,58 @@ html, body, #root {
   border-color: var(--accent);
 }
 
+/* Resolved font row */
+.sfp-resolved-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.sfp-resolved-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.sfp-resolved-detecting {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  opacity: 0.5;
+}
+
+.sfp-resolved-family {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: #57cc99;
+}
+
+.sfp-resolved-family--fallback {
+  color: #f4a261;
+}
+
+.sfp-resolved-note {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.sfp-resolved-note--warn {
+  color: #f4a261;
+  font-style: normal;
+  opacity: 1;
+}
+
 /* --- Sections --- */
 .sfp-section {
   padding: 8px 12px 0;

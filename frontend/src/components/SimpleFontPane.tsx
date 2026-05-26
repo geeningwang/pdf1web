@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import type { FontPaneData } from '../api'
 
 // ---------------------------------------------------------------------------
@@ -201,8 +201,51 @@ interface Props {
   onJumpToObj?: (num: number, gen: number) => void
 }
 
+interface ResolvedFont {
+  family: string       // the matched font name
+  isFallback: boolean  // true if not the first choice in the CSS stack
+  boldSynthesized: boolean
+  italicSynthesized: boolean
+}
+
+const GENERICS = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui'])
+
+async function detectFont(fontStyle: FontStyle): Promise<ResolvedFont> {
+  await document.fonts.ready
+
+  const families = fontStyle.family
+    .split(',')
+    .map(f => f.trim().replace(/^"|"$|^'|'$/g, ''))
+
+  for (let i = 0; i < families.length; i++) {
+    const family = families[i]
+    if (GENERICS.has(family.toLowerCase())) {
+      return { family: `${family} (generic)`, isFallback: i > 0, boldSynthesized: false, italicSynthesized: false }
+    }
+    if (document.fonts.check(`1px "${family}"`)) {
+      // Check if the specific bold/italic variant exists or will be synthesized
+      const boldAvail   = fontStyle.weight === 'bold'   ? document.fonts.check(`bold 1px "${family}"`)   : true
+      const italicAvail = fontStyle.style  === 'italic' ? document.fonts.check(`italic 1px "${family}"`) : true
+      return {
+        family,
+        isFallback: i > 0,
+        boldSynthesized: !boldAvail,
+        italicSynthesized: !italicAvail,
+      }
+    }
+  }
+  return { family: families[families.length - 1], isFallback: true, boldSynthesized: false, italicSynthesized: false }
+}
+
 const SimpleFontPane: React.FC<Props> = ({ data, onJumpToObj }) => {
   const fontStyle = useMemo(() => fontStyleForPdf(data.base_font), [data.base_font])
+  const [resolvedFont, setResolvedFont] = useState<ResolvedFont | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    detectFont(fontStyle).then(r => { if (!cancelled) setResolvedFont(r) })
+    return () => { cancelled = true }
+  }, [fontStyle])
 
   const sampleText = "The quick brown fox jumps over the lazy dog. 0123456789"
 
@@ -254,6 +297,31 @@ const SimpleFontPane: React.FC<Props> = ({ data, onJumpToObj }) => {
             >
               ToUnicode #{data.to_unicode_num}
             </button>
+          )}
+        </div>
+
+        {/* Resolved font row */}
+        <div className="sfp-resolved-row">
+          <span className="sfp-resolved-label">rendered as</span>
+          {resolvedFont == null ? (
+            <span className="sfp-resolved-detecting">detecting…</span>
+          ) : (
+            <>
+              <span className={`sfp-resolved-family${resolvedFont.isFallback ? ' sfp-resolved-family--fallback' : ''}`}>
+                {resolvedFont.family}
+              </span>
+              {resolvedFont.isFallback && (
+                <span className="sfp-resolved-note">
+                  (fallback — "{data.base_font}" not found on this system)
+                </span>
+              )}
+              {resolvedFont.boldSynthesized && (
+                <span className="sfp-resolved-note sfp-resolved-note--warn">bold synthesized</span>
+              )}
+              {resolvedFont.italicSynthesized && (
+                <span className="sfp-resolved-note sfp-resolved-note--warn">italic synthesized</span>
+              )}
+            </>
           )}
         </div>
       </div>
