@@ -268,6 +268,27 @@ function parseDashArray(raw: string): number[] {
   return (raw.match(/[-\d.]+/g) ?? []).map(Number).filter(v => !isNaN(v) && v >= 0)
 }
 
+// ── Font metric measurement ─────────────────────────────────────────────────
+
+/** Shared off-screen canvas for character-advance measurement (no transforms, identity CTM). */
+const _mcCanvas = document.createElement('canvas')
+const _mcCtx    = _mcCanvas.getContext('2d')!
+
+/**
+ * Return the advance width of `charStr` in em units for the given CSS font family
+ * at the given font size.  Results are cached so repeated calls are O(1).
+ */
+const _mcCache = new Map<string, number>()
+function measureEmWidth(charStr: string, cssFamily: string, fontSize: number): number {
+  const key = `${fontSize}|${cssFamily}|${charStr}`
+  const cached = _mcCache.get(key)
+  if (cached !== undefined) return cached
+  _mcCtx.font = `${fontSize}px ${cssFamily}`
+  const em = _mcCtx.measureText(charStr).width / fontSize
+  _mcCache.set(key, em)
+  return em
+}
+
 // ── Invisible-text overlay compositor ─────────────────────────────────────
 
 /**
@@ -474,10 +495,15 @@ function renderOps(
           }
         }
 
-        // Width lookup: use the PDF byte code b (not Unicode charCode) as the index
+        // Width lookup: use the PDF byte code b (not Unicode charCode) as the index.
+        // If the font has no Widths array, fall back to actual browser font metrics so
+        // that intra-word character positions are accurate (0.55 is far off for narrow
+        // glyphs like 'i', 'l', 't' whose real advance is ≈ 0.28 em).
         const w0 = (widths && b >= firstChar && b < firstChar + widths.length)
           ? widths[b - firstChar] / 1000
-          : (b === 0x20 ? 0.25 : 0.55)
+          : (charStr && ts.fontSize > 0
+              ? measureEmWidth(charStr, family, ts.fontSize)
+              : (b === 0x20 ? 0.25 : 0.55))
 
         const isSpace = b === 0x20
         const stepX = w0
