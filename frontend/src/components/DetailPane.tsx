@@ -64,6 +64,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
   const [cidToGidData, setCidToGidData] = useState<CidToGidData | null>(null)
   const [cidSetData, setCidSetData] = useState<CidSetData | null>(null)
   const [backRefs, setBackRefs] = useState<BackRefsData | null>(null)
+  const [typeLabel, setTypeLabel] = useState<string | null>(null)
 
   useEffect(() => {
     if (!node) {
@@ -88,6 +89,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
     setCidToGidData(null)
     setCidSetData(null)
     setBackRefs(null)
+    setTypeLabel(null)
     setError(null)
 
     // If the node already has detail text, use it directly
@@ -106,6 +108,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
     fetchObjectDetail(uploadId, node.obj_num, node.gen_num)
       .then(resp => {
         setDetail(resp.detail)
+        setTypeLabel(resp.type_label ?? null)
         setLoading(false)
         if (resp.is_image && !isImageNode) {
           setIsImageResolved(true)
@@ -188,7 +191,10 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
             ))}
           </div>
         )}
-        <span className="detail-node-label">{node.label}</span>
+        <div className="detail-label-row">
+          <span className="detail-node-label">{node.label}</span>
+          {typeLabel && <span className="detail-type-badge">{typeLabel}</span>}
+        </div>
         {backRefs && backRefs.refs.length > 0 && (
           <div className="detail-backrefs">
             <span className="detail-backrefs-label">referenced by</span>

@@ -395,8 +395,96 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
             if fobj2.is_name():
                 image_filter = fobj2.sval
 
+    # ------------------------------------------------------------------ #
+    # Derive a human-readable type label                                   #
+    # Priority: semantic flags → /Type dict key → backref context → structural
+    # ------------------------------------------------------------------ #
+    _IMG_FILTER_NICK = {
+        "DCTDecode": "JPEG", "JPXDecode": "JPEG 2000",
+        "FlateDecode": "Flate", "CCITTFaxDecode": "CCITT", "JBIG2Decode": "JBIG2",
+    }
+    _PDF_TYPE_MAP = {
+        "Page": "Page", "Pages": "Pages Tree", "Catalog": "Catalog",
+        "Font": "Font", "FontDescriptor": "Font Descriptor",
+        "XObject": "XObject", "ObjStm": "Object Stream",
+        "XRef": "Cross-Reference Stream", "Annot": "Annotation",
+        "Action": "Action", "Encoding": "Encoding",
+        "Pattern": "Pattern", "Shading": "Shading",
+        "ExtGState": "Graphics State", "Metadata": "Metadata Stream",
+        "OCG": "Optional Content Group", "OCMD": "Optional Content Membership",
+        "Outlines": "Outlines", "Filespec": "File Specification",
+        "EmbeddedFile": "Embedded File",
+    }
+    _SUBTYPE_QUALIFIES = {"Font", "XObject", "Action", "Annot", "Pattern", "Shading"}
+
+    if is_thumb:
+        type_label: str = "Page Thumbnail"
+    elif is_image:
+        nick = _IMG_FILTER_NICK.get(image_filter or "", "")
+        type_label = f"Image ({nick})" if nick else "Image"
+    elif is_content_stream and obj and obj.is_array():
+        type_label = "Content Stream (Array)"
+    elif is_content_stream:
+        type_label = "Content Stream"
+    elif is_icc_profile:
+        type_label = "ICC Profile"
+    elif is_palette:
+        type_label = "Color Palette"
+    elif is_tounicode:
+        type_label = "ToUnicode CMap"
+    elif is_ttf:
+        type_label = "Font File (TrueType)"
+    elif is_font_descriptor:
+        type_label = "Font Descriptor"
+    elif is_cid_to_gid_map:
+        type_label = "CID-to-GID Map"
+    elif is_cid_set:
+        type_label = "CID Set"
+    elif obj and (obj.is_dict() or obj.type == PdfObjType.Stream):
+        type_key = obj.get("Type")
+        sub_key = obj.get("Subtype")
+        if type_key.is_name():
+            base = _PDF_TYPE_MAP.get(type_key.sval, type_key.sval)
+            st = sub_key.sval if sub_key.is_name() else None
+            type_label = f"{base} ({st})" if st and type_key.sval in _SUBTYPE_QUALIFIES else base
+        elif obj.type == PdfObjType.Stream:
+            # Generic stream — derive context from first backref
+            refs_here = backref_index.get(num, [])
+            if refs_here:
+                r0 = refs_here[0]
+                ptype = r0["type_name"]
+                # Parent is an anonymous Array — traverse one more level for context
+                if ptype == "Array":
+                    arr_refs = backref_index.get(r0["from_num"], [])
+                    if arr_refs and arr_refs[0].get("key_path") == "Contents":
+                        type_label = "Content Stream"
+                    elif arr_refs:
+                        up = arr_refs[0]["type_name"]
+                        type_label = f"Stream of {up}" if up and up not in ("", "unknown") else "Stream"
+                    else:
+                        type_label = "Stream"
+                else:
+                    type_label = f"Stream of {ptype}" if ptype and ptype not in ("", "unknown") else "Stream"
+            else:
+                type_label = "Stream"
+        else:
+            type_label = "Dictionary"
+    elif obj and obj.is_array():
+        type_label = "Array"
+    elif obj:
+        _STRUCT = {
+            PdfObjType.Integer: "Integer", PdfObjType.Real: "Real",
+            PdfObjType.Name: "Name", PdfObjType.LiteralString: "String",
+            PdfObjType.HexString: "String", PdfObjType.Boolean: "Boolean",
+            PdfObjType.Reference: "Reference", PdfObjType.Null: "Null",
+        }
+        type_label = _STRUCT.get(obj.type, "Unknown")
+    else:
+        type_label = "—"
+
     return {
         "detail": detail,
+        "type_label": type_label,
         "is_image": is_image,
         "is_thumb": is_thumb,
         "is_icc_profile": is_icc_profile,
