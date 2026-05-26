@@ -560,6 +560,7 @@ function renderOps(
 
       // ── XObject ──────────────────────────────────────────────────────────
       case 'Do': {
+        if (showInvisibleText) break   // skip images so invisible text isn't buried under scan
         if (ops.length >= 1) {
           const name = ops[0].value.startsWith('/') ? ops[0].value.slice(1) : ops[0].value
           const img = loadedImages.get(name)
