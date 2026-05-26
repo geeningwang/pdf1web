@@ -28,6 +28,7 @@ interface Props {
   data: ContentStreamData
   uploadId: string
   maxOps?: number
+  showInvisibleText?: boolean
 }
 
 // ── numeric helpers ─────────────────────────────────────────────────────────
@@ -276,6 +277,7 @@ function renderOps(
   loadedOtFonts: Map<string, opentype.Font>,
   cidToGidMaps: Map<string, Uint16Array | null>,
   maxOps?: number,
+  showInvisibleText?: boolean,
 ): void {
   const ops = maxOps !== undefined ? data.operations.slice(0, maxOps) : data.operations
   const fontResources = data.resources?.font ?? {}
@@ -314,13 +316,14 @@ function renderOps(
       const bytes = rawTokenToBytes(rawToken)
       if (bytes.length < 2) return
       const cidMap = cidToGidMaps.get(ts.fontName)  // null = Identity
-      const doFill   = ts.renderMode !== 3 && (ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6)
-      const doStroke = ts.renderMode !== 3 && (ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6)
+      const isInvisible = ts.renderMode === 3
+      const doFill   = isInvisible ? !!showInvisibleText : (ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6)
+      const doStroke = isInvisible ? false : (ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6)
 
       ctx.save()
       ctx.transform(a, b, c, d, e, f)
       ctx.transform(ts.fontSize * hs, 0, 0, -ts.fontSize, 0, ts.rise)
-      ctx.fillStyle   = gs.fillColor
+      ctx.fillStyle   = (isInvisible && showInvisibleText) ? 'rgba(0,120,255,0.55)' : gs.fillColor
       ctx.strokeStyle = gs.strokeColor
 
       let xPos = 0
@@ -377,8 +380,9 @@ function renderOps(
       const widths    = fontEntry?.widths ?? null
       const firstChar = fontEntry?.first_char ?? 0
       const cmap      = fontEntry?.cmap ?? null
-      const doFill   = ts.renderMode !== 3 && (ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6)
-      const doStroke = ts.renderMode !== 3 && (ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6)
+      const isInvisible = ts.renderMode === 3
+      const doFill   = isInvisible ? !!showInvisibleText : (ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6)
+      const doStroke = isInvisible ? false : (ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6)
 
       ctx.save()
       ctx.transform(a, b, c, d, e, f)
@@ -387,7 +391,7 @@ function renderOps(
         ? `1px ${family}`
         : `${italic ? 'italic' : 'normal'} ${bold ? 'bold' : 'normal'} 1px ${family}`
       ctx.font = fontStyle
-      ctx.fillStyle   = gs.fillColor
+      ctx.fillStyle   = (isInvisible && showInvisibleText) ? 'rgba(0,120,255,0.55)' : gs.fillColor
       ctx.strokeStyle = gs.strokeColor
 
       // xPos in glyph-space canvas units (1 unit = em = fontSize text-space units * hs)
@@ -674,7 +678,7 @@ async function compositeWithSMask(
   return off
 }
 
-const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, maxOps }, ref) => {
+const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, maxOps, showInvisibleText }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef   = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
@@ -803,7 +807,7 @@ const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, ma
     Promise.all([...fontPromises, ...imagePromises]).then(() => {
       if (cancelled) return
       try {
-        renderOps(ctx, data, loadedImages, loadedFontFamilies, loadedOtFonts, cidToGidMaps, maxOps)
+        renderOps(ctx, data, loadedImages, loadedFontFamilies, loadedOtFonts, cidToGidMaps, maxOps, showInvisibleText)
         setStatus('done')
       } catch (err) {
         setStatus('error')
@@ -812,7 +816,7 @@ const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, ma
     })
 
     return () => { cancelled = true }
-  }, [data, uploadId, maxOps])
+  }, [data, uploadId, maxOps, showInvisibleText])
 
   useImperativeHandle(ref, () => ({
     savePng() {

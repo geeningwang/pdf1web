@@ -94,6 +94,7 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
   const rendererRef = useRef<CsCanvasHandle>(null)
   const [partialInput, setPartialInput] = useState('')
   const [maxOps, setMaxOps] = useState<number | undefined>(undefined)
+  const [showInvisibleText, setShowInvisibleText] = useState(false)
 
   return (
     <div className="cs-pane">
@@ -148,6 +149,13 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
                 >
                   Save to PNG
                 </button>
+                <button
+                  className={`cs-render-toggle${showInvisibleText ? ' active' : ''}`}
+                  onClick={() => setShowInvisibleText(v => !v)}
+                  title="Highlight invisible text (render mode 3) in blue"
+                >
+                  {showInvisibleText ? 'Hide invisible text' : 'Show invisible text'}
+                </button>
               </>
             )}
           </div>
@@ -156,7 +164,7 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
 
       {/* Canvas renderer */}
       {canRender && showCanvas && (
-        <CsCanvasRenderer ref={rendererRef} data={data} uploadId={uploadId!} maxOps={maxOps} />
+        <CsCanvasRenderer ref={rendererRef} data={data} uploadId={uploadId!} maxOps={maxOps} showInvisibleText={showInvisibleText} />
       )}
 
       {/* Structure bar */}
