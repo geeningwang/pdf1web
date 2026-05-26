@@ -73,6 +73,9 @@ function StructBar({ tables, totalSize }: StructBarProps) {
 
 interface Props {
   data: TtfTablesData
+  uploadId?: string
+  num?: number
+  gen?: number
 }
 
 // --- Glyph grid (exported so DetailPane can place it at top) ---
@@ -171,21 +174,27 @@ export function GlyphGrid({ uploadId, num, gen }: { uploadId: string; num: numbe
   )
 }
 
-export default function TtfTablesPane({ data }: Props) {
+export default function TtfTablesPane({ data, uploadId, num, gen }: Props) {
   return (
     <div className="ttf-pane">
-      <div className="ttf-header">
-        <div className="ttf-title">TrueType / OpenType Font</div>
-        <div className="ttf-meta">
-          <span className="ttf-meta-item"><b>Format:</b> {data.sfVersion}</span>
-          <span className="ttf-meta-item"><b>Tables:</b> {data.num_tables}</span>
-          <span className="ttf-meta-item"><b>Size:</b> {fmtBytes(data.total_size)}</span>
+      <div className="ttf-fixed-top">
+        <div className="ttf-header">
+          <div className="ttf-title">TrueType / OpenType Font</div>
+          <div className="ttf-meta">
+            <span className="ttf-meta-item"><b>Format:</b> {data.sfVersion}</span>
+            <span className="ttf-meta-item"><b>Tables:</b> {data.num_tables}</span>
+            <span className="ttf-meta-item"><b>Size:</b> {fmtBytes(data.total_size)}</span>
+          </div>
         </div>
+        <StructBar tables={data.tables} totalSize={data.total_size} />
       </div>
 
-      <StructBar tables={data.tables} totalSize={data.total_size} />
-
       <div className="ttf-table-wrap">
+        {uploadId != null && num != null && gen != null && (
+          <div className="ttf-glyph-top">
+            <GlyphGrid uploadId={uploadId} num={num} gen={gen} />
+          </div>
+        )}
         <table className="ttf-table">
           <thead>
             <tr>

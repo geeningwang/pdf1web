@@ -1418,7 +1418,8 @@ html, body, #root {
 /* -----------------------------------------------------------------------
    TrueType / OpenType table pane
    ----------------------------------------------------------------------- */
-.ttf-pane { padding: 8px 0; }
+.ttf-pane { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.ttf-fixed-top { flex-shrink: 0; padding-top: 8px; }
 
 .ttf-header {
   padding: 0 12px 8px; border-bottom: 1px solid var(--border);
@@ -1454,7 +1455,7 @@ html, body, #root {
 }
 
 /* Table */
-.ttf-table-wrap { overflow: visible; padding: 0 12px 8px; }
+.ttf-table-wrap { flex: 1; min-height: 0; overflow-y: auto; overflow-x: auto; padding: 0 12px 8px; }
 .ttf-table { border-collapse: collapse; font-size: 12px; width: 100%; }
 .ttf-table th {
   position: sticky; top: 0; background: var(--bg2);
@@ -1481,6 +1482,10 @@ html, body, #root {
 .ttf-desc { font-size: 11px; color: var(--text-dim); }
 
 /* Glyph grid */
+.ttf-glyph-top {
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+}
 .ttf-glyph-section { padding: 10px 14px; }
 .ttf-glyph-toolbar {
   display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap;
@@ -1509,9 +1514,13 @@ html, body, #root {
 /* Section headings for detail-body */
 .detail-cmap-section,
 .detail-fd-section,
-.detail-ttf-section,
 .detail-ctg-section,
 .detail-css-section {
+  border-bottom: 1px solid var(--border);
+}
+.detail-ttf-section {
+  flex: 1; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column;
   border-bottom: 1px solid var(--border);
 }
 

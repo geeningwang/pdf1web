@@ -8,7 +8,7 @@ import ContentStreamPane from './ContentStreamPane'
 import PalettePane from './PalettePane'
 import ToUnicodePane from './ToUnicodePane'
 import FontDescriptorPane from './FontDescriptorPane'
-import TtfTablesPane, { GlyphGrid } from './TtfTablesPane'
+import TtfTablesPane from './TtfTablesPane'
 import CidToGidPane from './CidToGidPane'
 import CidSetPane from './CidSetPane'
 import SimpleFontPane from './SimpleFontPane'
@@ -244,12 +244,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
       <PanelGroup direction="vertical" autoSaveId="detail-vsplit" className="detail-body">
         <Panel defaultSize={55} minSize={10} className="detail-viz-panel">
           <div className="detail-viz-scroll">
-            {/* Glyph grid at the top — same slot as image */}
-            {!canShowImage && ttfData && node && uploadId && (
-              <div className="detail-glyph-top-section">
-                <GlyphGrid uploadId={uploadId} num={node.obj_num} gen={node.gen_num} />
-              </div>
-            )}
+
 
             {canShowImage && imageDetail && (
               <div className="detail-image-meta-section">
@@ -316,7 +311,12 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
 
             {!canShowImage && ttfData && (
               <div className="detail-ttf-section">
-                <TtfTablesPane data={ttfData} />
+                <TtfTablesPane
+                  data={ttfData}
+                  uploadId={uploadId ?? undefined}
+                  num={node?.obj_num}
+                  gen={node?.gen_num}
+                />
               </div>
             )}
 
