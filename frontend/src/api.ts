@@ -8,6 +8,7 @@ export interface TreeNode {
   obj_num: number
   gen_num: number
   is_image: boolean
+  type_label: string
   children: TreeNode[]
 }
 

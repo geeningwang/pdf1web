@@ -81,6 +81,7 @@ const TreeNodeRow: React.FC<NodeProps> = ({
         <span className="tree-label" title={node.label}>
           {node.is_image && <span className="tree-image-badge" title="Image XObject">🖼</span>}
           {node.label}
+          {node.type_label && <span className="tree-type-label">{node.type_label}</span>}
         </span>
       </div>
       {hasChildren && open && (

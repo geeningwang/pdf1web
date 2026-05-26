@@ -323,11 +323,24 @@ html, body, #root {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.4;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
 }
 
 .tree-image-badge {
   margin-right: 4px;
   font-size: 11px;
+}
+
+.tree-type-label {
+  flex-shrink: 0;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  opacity: 0.75;
 }
 
 /* -----------------------------------------------------------------------

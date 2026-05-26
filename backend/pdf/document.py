@@ -31,6 +31,7 @@ class PdfNode:
     obj_num: int = -1
     gen_num: int = 0
     is_image: bool = False
+    type_label: str = ""
     children: list["PdfNode"] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,6 +44,7 @@ class PdfNode:
             "obj_num": self.obj_num,
             "gen_num": self.gen_num,
             "is_image": self.is_image,
+            "type_label": self.type_label,
             "children": [c.to_dict() for c in self.children],
         }
 
@@ -843,7 +845,16 @@ class PdfDocument:
         if not cont_val.is_null():
             refs: list[PdfRef] = []
             if cont_val.is_ref():
-                refs.append(cont_val.ref)
+                # /Contents may be a direct stream reference, OR a reference to
+                # an array of stream references (both are valid per PDF spec §7.8.1).
+                # Resolve one level to detect the array case.
+                resolved = self.resolve_num(cont_val.ref.num, cont_val.ref.gen)
+                if resolved is not None and resolved.is_array():
+                    for item in resolved.arr:
+                        if item.is_ref():
+                            refs.append(item.ref)
+                else:
+                    refs.append(cont_val.ref)
             elif cont_val.is_array():
                 for item in cont_val.arr:
                     if item.is_ref():
