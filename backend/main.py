@@ -1055,9 +1055,9 @@ def get_palette(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                     break
         if parent_array is None:
             raise HTTPException(422, "Not an Indexed color space array")
-        # Use the raw bytes of this stream as the lookup table directly
+        # Decode the lookup stream (may be FlateDecode-compressed)
         hival = int(parent_array.arr[2].ival) if parent_array.arr[2].is_int() else None
-        raw = obj.stream_raw
+        raw = _decode_stream(obj) or obj.stream_raw
     else:
         # Expect [/Indexed base_cs hival lookup]
         if len(obj.arr) < 4 or not obj.arr[0].is_name() or obj.arr[0].sval != "Indexed":
@@ -1071,7 +1071,7 @@ def get_palette(upload_id: str, num: int, gen: int) -> dict[str, Any]:
             lookup = doc.resolve_num(lookup_ref.ref.num, lookup_ref.ref.gen)
             if lookup is None:
                 raise HTTPException(404, "Palette lookup stream not found")
-            raw = lookup.stream_raw
+            raw = _decode_stream(lookup) or lookup.stream_raw
         elif lookup_ref.is_str():
             raw = lookup_ref.sval.encode("latin-1")
         else:
