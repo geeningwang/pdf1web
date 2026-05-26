@@ -470,7 +470,16 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         else:
             type_label = "Dictionary"
     elif obj and obj.is_array():
-        type_label = "Array"
+        _CS_ARRAY_NAMES = {"Indexed", "ICCBased", "CalRGB", "CalGray", "Lab",
+                           "Separation", "DeviceN", "Pattern"}
+        _PROCSET_NAMES = {"PDF", "Text", "ImageB", "ImageC", "ImageI"}
+        arr = obj.arr
+        if arr and arr[0].is_name() and arr[0].sval in _CS_ARRAY_NAMES:
+            type_label = f"Color Space ({arr[0].sval})"
+        elif arr and all(item.is_name() and item.sval in _PROCSET_NAMES for item in arr):
+            type_label = "Procedure Set"
+        else:
+            type_label = "Array"
     elif obj:
         _STRUCT = {
             PdfObjType.Integer: "Integer", PdfObjType.Real: "Real",
