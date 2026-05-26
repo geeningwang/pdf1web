@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react'
 import type { XRefData, XRefEntry } from '../api'
 
 // ---------------------------------------------------------------------------
-// File-layout strip — marks object positions proportionally across file size
+// File-layout strip — proportional blocks showing allocation per object
 // ---------------------------------------------------------------------------
 interface LayoutStripProps {
   entries: XRefEntry[]
@@ -11,27 +11,83 @@ interface LayoutStripProps {
   hoveredNum: number | null
 }
 
+interface LayoutSeg {
+  kind: 'obj' | 'gap'
+  entry?: XRefEntry
+  size: number
+  label: string
+}
+
+const LAYOUT_PALETTE = [
+  '#4c7dd4', '#2e9e6b', '#c97a1a', '#7c52b2',
+  '#b03e3e', '#1a8fa0', '#8a7c2e', '#5c7a3e',
+  '#c94f8a', '#4a8080',
+]
+
 function LayoutStrip({ entries, fileSize, onHover, hoveredNum }: LayoutStripProps) {
-  const inUse = useMemo(
-    () => entries.filter(e => e.etype === 'in_use').sort((a, b) => a.offset - b.offset),
-    [entries],
-  )
-  if (fileSize <= 0 || inUse.length === 0) return null
+  const segments = useMemo<LayoutSeg[]>(() => {
+    const inUse = entries
+      .filter(e => e.etype === 'in_use')
+      .sort((a, b) => a.offset - b.offset)
+    if (inUse.length === 0 || fileSize <= 0) return []
+
+    const segs: LayoutSeg[] = []
+
+    // PDF header / preamble before first object
+    if (inUse[0].offset > 0) {
+      segs.push({
+        kind: 'gap',
+        size: inUse[0].offset,
+        label: `Header · ${inUse[0].offset} B`,
+      })
+    }
+
+    for (let i = 0; i < inUse.length; i++) {
+      const e = inUse[i]
+      const nextOffset = i + 1 < inUse.length ? inUse[i + 1].offset : fileSize
+      const size = nextOffset - e.offset
+      const hex = (n: number) => '0x' + n.toString(16).toUpperCase().padStart(6, '0')
+      segs.push({
+        kind: 'obj',
+        entry: e,
+        size,
+        label: `Obj ${e.obj_num} gen ${e.gen} · ${hex(e.offset)}–${hex(nextOffset - 1)} · ${size.toLocaleString()} B`,
+      })
+    }
+
+    return segs
+  }, [entries, fileSize])
+
+  if (segments.length === 0) return null
+
+  let colorIdx = 0
 
   return (
-    <div className="xrp-layout-wrap" title="File layout — each tick is an in-use object at its byte offset">
-      <div className="xrp-layout-label">file layout</div>
+    <div className="xrp-layout-wrap">
+      <div className="xrp-layout-label">file layout — allocation per object</div>
       <div className="xrp-layout-bar">
-        {inUse.map(e => {
-          const pct = (e.offset / fileSize) * 100
-          const isHov = hoveredNum === e.obj_num
+        {segments.map((seg, i) => {
+          if (seg.kind === 'gap') {
+            return (
+              <div
+                key={`gap-${i}`}
+                className="xrp-layout-seg xrp-layout-seg--gap"
+                style={{ flex: Math.max(seg.size, 1) }}
+                title={seg.label}
+              />
+            )
+          }
+          const color = LAYOUT_PALETTE[colorIdx % LAYOUT_PALETTE.length]
+          const isHov = hoveredNum === seg.entry!.obj_num
+          colorIdx++
           return (
             <div
-              key={e.obj_num}
-              className={`xrp-layout-tick${isHov ? ' xrp-layout-tick--hov' : ''}`}
-              style={{ left: `${pct}%` }}
-              onMouseEnter={() => onHover(e)}
+              key={`obj-${seg.entry!.obj_num}`}
+              className={`xrp-layout-seg xrp-layout-seg--obj${isHov ? ' xrp-layout-seg--hov' : ''}`}
+              style={{ flex: Math.max(seg.size, 1), background: color }}
+              onMouseEnter={() => onHover(seg.entry!)}
               onMouseLeave={() => onHover(null)}
+              title={seg.label}
             />
           )
         })}
@@ -61,8 +117,24 @@ function EtypeBadge({ etype }: { etype: XRefEntry['etype'] }) {
 // Main component
 // ---------------------------------------------------------------------------
 type Filter = 'all' | 'in_use' | 'free' | 'compressed'
-type SortCol = 'obj_num' | 'offset' | 'gen'
+type SortCol = 'obj_num' | 'offset' | 'gen' | 'size_bytes'
 type SortDir = 'asc' | 'desc'
+
+function fmtSize(bytes: number | undefined): string {
+  if (bytes == null || bytes <= 0) return '—'
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${bytes.toLocaleString()} B`
+}
+
+function KindCell({ e }: { e: XRefEntry }) {
+  if (!e.kind || e.etype === 'free') return <span className="xrp-kind-none">—</span>
+  // Derive CSS key from the base label (before any parenthetical), lowercased, spaces→hyphens
+  const cssKey = e.kind.replace(/\s*\(.*$/, '').trim().toLowerCase().replace(/\s+/g, '-')
+  return (
+    <span className={`xrp-kind-label xrp-kind--${cssKey}`}>{e.kind}</span>
+  )
+}
 
 interface Props {
   data: XRefData
@@ -81,6 +153,7 @@ const XRefPane: React.FC<Props> = ({ data, onJumpToObj }) => {
       let av: number, bv: number
       if (sortCol === 'obj_num') { av = a.obj_num; bv = b.obj_num }
       else if (sortCol === 'gen') { av = a.gen; bv = b.gen }
+      else if (sortCol === 'size_bytes') { av = a.size_bytes ?? 0; bv = b.size_bytes ?? 0 }
       else { av = a.offset; bv = b.offset }
       return sortDir === 'asc' ? av - bv : bv - av
     })
@@ -162,19 +235,23 @@ const XRefPane: React.FC<Props> = ({ data, onJumpToObj }) => {
               <th className="xrp-th xrp-th--obj" onClick={() => toggleSort('obj_num')}>
                 Obj <SortArrow col="obj_num" />
               </th>
-              <th className="xrp-th xrp-th--type">Type</th>
+              <th className="xrp-th xrp-th--type">XRef</th>
+              <th className="xrp-th xrp-th--kind">Kind</th>
               <th className="xrp-th xrp-th--gen" onClick={() => toggleSort('gen')}>
                 Gen <SortArrow col="gen" />
               </th>
               <th className="xrp-th xrp-th--offset" onClick={() => toggleSort('offset')}>
                 Offset / Location <SortArrow col="offset" />
               </th>
+              <th className="xrp-th xrp-th--size" onClick={() => toggleSort('size_bytes')}>
+                Size <SortArrow col="size_bytes" />
+              </th>
             </tr>
           </thead>
           <tbody>
             {filtered.map(e => {
               const isHov = hoveredNum === e.obj_num
-              const canJump = e.etype !== 'free'
+              const canJump = true
               return (
                 <tr
                   key={e.obj_num}
@@ -186,6 +263,7 @@ const XRefPane: React.FC<Props> = ({ data, onJumpToObj }) => {
                 >
                   <td className="xrp-td xrp-td--obj">{e.obj_num}</td>
                   <td className="xrp-td xrp-td--type"><EtypeBadge etype={e.etype} /></td>
+                  <td className="xrp-td xrp-td--kind"><KindCell e={e} /></td>
                   <td className="xrp-td xrp-td--gen">{e.gen}</td>
                   <td className="xrp-td xrp-td--offset">
                     {e.etype === 'in_use' && (
@@ -204,6 +282,7 @@ const XRefPane: React.FC<Props> = ({ data, onJumpToObj }) => {
                       </span>
                     )}
                   </td>
+                  <td className="xrp-td xrp-td--size" title={e.size_bytes ? `${e.size_bytes.toLocaleString()} bytes` : undefined}>{fmtSize(e.size_bytes)}</td>
                 </tr>
               )
             })}

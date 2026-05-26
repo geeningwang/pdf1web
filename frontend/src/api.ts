@@ -575,6 +575,8 @@ export interface XRefEntry {
   gen: number
   stm_num?: number    // compressed only: object stream object number
   stm_index?: number  // compressed only: index within object stream
+  kind?: string       // label matching tree-view type_label (e.g. "Pages Tree", "Font (Type1)")
+  size_bytes?: number // in_use only: bytes from this offset to next object
 }
 
 export interface XRefData {

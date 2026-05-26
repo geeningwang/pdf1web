@@ -830,19 +830,145 @@ def get_xref_table(upload_id: str) -> dict[str, Any]:
     compressed = sum(1 for e in entries.values() if e.etype == XrefEntryType.Compressed)
     file_size = doc._reader.size if doc._reader is not None else 0
 
+    # Compute byte sizes for in-use objects by sorting by offset
+    sorted_inuse = sorted(
+        [(num, xe) for num, xe in entries.items() if xe.etype == XrefEntryType.InUse],
+        key=lambda x: x[1].offset,
+    )
+    obj_sizes: dict[int, int] = {}
+    for i, (num, xe) in enumerate(sorted_inuse):
+        next_off = sorted_inuse[i + 1][1].offset if i + 1 < len(sorted_inuse) else file_size
+        obj_sizes[num] = next_off - xe.offset
+
+    # Same label logic as _annotate_tree_type_labels so Kind column matches tree view
+    _IMG_FILTER = {
+        "DCTDecode": "JPEG", "JPXDecode": "JPEG 2000",
+        "FlateDecode": "Flate", "CCITTFaxDecode": "CCITT", "JBIG2Decode": "JBIG2",
+    }
+    _PDF_TYPE_MAP = {
+        "Page": "Page", "Pages": "Pages Tree", "Catalog": "Catalog",
+        "Font": "Font", "FontDescriptor": "Font Descriptor",
+        "XObject": "XObject", "ObjStm": "Object Stream",
+        "XRef": "Cross-Reference Stream", "Annot": "Annotation",
+        "Action": "Action", "Encoding": "Encoding",
+        "Pattern": "Pattern", "Shading": "Shading",
+        "ExtGState": "Graphics State", "Metadata": "Metadata Stream",
+        "OCG": "Optional Content Group", "OCMD": "Optional Content Membership",
+        "Outlines": "Outlines",
+    }
+    _SUBTYPE_Q = {"Font", "XObject", "Action", "Annot", "Pattern", "Shading"}
+    _CS_ARRAY = {"Indexed", "ICCBased", "CalRGB", "CalGray", "Lab",
+                 "Separation", "DeviceN", "Pattern"}
+    _PROCSET  = {"PDF", "Text", "ImageB", "ImageC", "ImageI"}
+    _SCALAR   = {
+        PdfObjType.Integer: "Integer", PdfObjType.Real: "Real",
+        PdfObjType.Name: "Name", PdfObjType.LiteralString: "String",
+        PdfObjType.HexString: "String", PdfObjType.Boolean: "Boolean",
+        PdfObjType.Reference: "Reference", PdfObjType.Null: "Null",
+    }
+
+    def _obj_kind(num: int, gen: int) -> str:
+        """Returns the same label string used by the tree-view type_label."""
+        try:
+            obj = doc.resolve_num(num, gen)
+            if obj is None:
+                return "—"
+            refs = backref_index.get(num, [])
+
+            # Backref-based semantic labels (mirrors _annotate_tree_type_labels)
+            for r in refs:
+                kp = r.get("key_path", "")
+                tn = r.get("type_name", "")
+                from_num = r.get("from_num", -1)
+                if kp == "Contents":
+                    return "Content Stream (Array)" if obj.is_array() else "Content Stream"
+                if kp.startswith("[") and obj.type == PdfObjType.Stream:
+                    for pr in backref_index.get(from_num, []):
+                        if pr.get("key_path") == "Contents":
+                            return "Content Stream"
+                if kp == "FontFile2" and tn == "FontDescriptor":
+                    return "Font File (TrueType)"
+                if kp == "ToUnicode" and tn == "Font":
+                    return "ToUnicode CMap"
+                if kp == "CIDToGIDMap" and tn == "Font":
+                    return "CID-to-GID Map"
+                if kp == "CIDSet" and tn == "FontDescriptor":
+                    return "CID Set"
+                if kp == "Thumb":
+                    return "Page Thumbnail"
+                if kp == "[1]":
+                    parent = doc.resolve_num(from_num, 0)
+                    if (parent and parent.is_array() and len(parent.arr) >= 2
+                            and parent.arr[0].is_name()
+                            and parent.arr[0].sval == "ICCBased"):
+                        return "ICC Profile"
+                if kp == "[3]":
+                    parent = doc.resolve_num(from_num, 0)
+                    if (parent and parent.is_array() and len(parent.arr) >= 4
+                            and parent.arr[0].is_name()
+                            and parent.arr[0].sval == "Indexed"):
+                        return "Color Palette"
+
+            # Dict / Stream
+            if obj.is_dict() or obj.type == PdfObjType.Stream:
+                st = obj.get("Subtype")
+                if st.is_name() and st.sval == "Image":
+                    fobj = obj.get("Filter")
+                    nick = _IMG_FILTER.get(fobj.sval if fobj.is_name() else "", "")
+                    return f"Image ({nick})" if nick else "Image"
+                tk = obj.get("Type")
+                sk = obj.get("Subtype")
+                if tk.is_name():
+                    base = _PDF_TYPE_MAP.get(tk.sval, tk.sval)
+                    sub = sk.sval if sk.is_name() else None
+                    return f"{base} ({sub})" if sub and tk.sval in _SUBTYPE_Q else base
+                if obj.type == PdfObjType.Stream:
+                    if refs:
+                        r0 = refs[0]
+                        ptype = r0["type_name"]
+                        if ptype == "Array":
+                            arr_refs = backref_index.get(r0["from_num"], [])
+                            if arr_refs and arr_refs[0].get("key_path") == "Contents":
+                                return "Content Stream"
+                            up = arr_refs[0]["type_name"] if arr_refs else ""
+                            return f"Stream of {up}" if up and up not in ("", "unknown") else "Stream"
+                        return f"Stream of {ptype}" if ptype and ptype not in ("", "unknown") else "Stream"
+                    return "Stream"
+                return "Dictionary"
+
+            # Array
+            if obj.is_array():
+                arr = obj.arr
+                if arr and arr[0].is_name() and arr[0].sval in _CS_ARRAY:
+                    return f"Color Space ({arr[0].sval})"
+                if arr and all(item.is_name() and item.sval in _PROCSET for item in arr):
+                    return "Procedure Set"
+                return "Array"
+
+            return _SCALAR.get(obj.type, "Unknown")
+        except Exception:
+            return "?"
+
     rows: list[dict[str, Any]] = []
     for obj_num in sorted(entries):
         xe = entries[obj_num]
         if xe.etype == XrefEntryType.Free:
             rows.append({"obj_num": obj_num, "etype": "free", "offset": xe.offset, "gen": xe.gen})
         elif xe.etype == XrefEntryType.InUse:
-            rows.append({"obj_num": obj_num, "etype": "in_use", "offset": xe.offset, "gen": xe.gen})
+            rows.append({
+                "obj_num": obj_num, "etype": "in_use",
+                "offset": xe.offset, "gen": xe.gen,
+                "kind": _obj_kind(obj_num, xe.gen),
+                "size_bytes": obj_sizes.get(obj_num, 0),
+            })
         else:
             rows.append({
                 "obj_num": obj_num, "etype": "compressed",
                 "offset": 0, "gen": xe.gen,
-                "stm_num": xe.offset,       # object stream obj number
+                "stm_num": xe.offset,
                 "stm_index": xe.index_in_stm,
+                "kind": _obj_kind(obj_num, xe.gen),
+                "size_bytes": 0,
             })
 
     return {

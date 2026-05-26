@@ -688,7 +688,7 @@ class PdfDocument:
                 en = PdfNode(
                     label=lbl,
                     detail=f"Object {obj_num} gen {xe.gen}  FREE",
-                    obj_num=-1,
+                    obj_num=obj_num,
                     gen_num=xe.gen,
                 )
             elif xe.etype == XrefEntryType.InUse:
