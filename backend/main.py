@@ -816,6 +816,45 @@ def get_backrefs(upload_id: str, num: int) -> dict[str, Any]:
     return {"obj_num": num, "refs": refs}
 
 
+@app.get("/api/xref/{upload_id}")
+def get_xref_table(upload_id: str) -> dict[str, Any]:
+    """Return structured cross-reference table data for the given document."""
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found — please re-upload the PDF")
+    backref_index = _backref_cache.get(upload_id, {})
+
+    entries = doc._xref.entries
+    in_use = sum(1 for e in entries.values() if e.etype == XrefEntryType.InUse)
+    free   = sum(1 for e in entries.values() if e.etype == XrefEntryType.Free)
+    compressed = sum(1 for e in entries.values() if e.etype == XrefEntryType.Compressed)
+    file_size = doc._reader.size if doc._reader is not None else 0
+
+    rows: list[dict[str, Any]] = []
+    for obj_num in sorted(entries):
+        xe = entries[obj_num]
+        if xe.etype == XrefEntryType.Free:
+            rows.append({"obj_num": obj_num, "etype": "free", "offset": xe.offset, "gen": xe.gen})
+        elif xe.etype == XrefEntryType.InUse:
+            rows.append({"obj_num": obj_num, "etype": "in_use", "offset": xe.offset, "gen": xe.gen})
+        else:
+            rows.append({
+                "obj_num": obj_num, "etype": "compressed",
+                "offset": 0, "gen": xe.gen,
+                "stm_num": xe.offset,       # object stream obj number
+                "stm_index": xe.index_in_stm,
+            })
+
+    return {
+        "total": len(entries),
+        "in_use": in_use,
+        "free": free,
+        "compressed": compressed,
+        "file_size": file_size,
+        "entries": rows,
+    }
+
+
 @app.get("/api/icc/{upload_id}/{num}/{gen}")
 def get_icc_profile(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     """Return parsed ICC profile data for a FlateDecode stream object."""

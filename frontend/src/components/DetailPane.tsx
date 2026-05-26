@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData, ToUnicodeData, FontDescriptorData, TtfTablesData, BackRefsData, CidToGidData, CidSetData, FontPaneData } from '../api'
-import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, fetchCidToGid, fetchCidSet, fetchFontPane, imageUrl } from '../api'
+import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData, ToUnicodeData, FontDescriptorData, TtfTablesData, BackRefsData, CidToGidData, CidSetData, FontPaneData, XRefData } from '../api'
+import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, fetchCidToGid, fetchCidSet, fetchFontPane, fetchXRef, imageUrl } from '../api'
 import IccPane from './IccPane'
 import ImagePane from './ImagePane'
 import ContentStreamPane from './ContentStreamPane'
@@ -12,6 +12,7 @@ import TtfTablesPane, { GlyphGrid } from './TtfTablesPane'
 import CidToGidPane from './CidToGidPane'
 import CidSetPane from './CidSetPane'
 import SimpleFontPane from './SimpleFontPane'
+import XRefPane from './XRefPane'
 
 interface Props {
   node: TreeNode | null
@@ -65,6 +66,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
   const [cidToGidData, setCidToGidData] = useState<CidToGidData | null>(null)
   const [cidSetData, setCidSetData] = useState<CidSetData | null>(null)
   const [fontData, setFontData] = useState<FontPaneData | null>(null)
+  const [xrefData, setXrefData] = useState<XRefData | null>(null)
   const [backRefs, setBackRefs] = useState<BackRefsData | null>(null)
   const [typeLabel, setTypeLabel] = useState<string | null>(null)
 
@@ -91,9 +93,15 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
     setCidToGidData(null)
     setCidSetData(null)
     setFontData(null)
+    setXrefData(null)
     setBackRefs(null)
     setTypeLabel(null)
     setError(null)
+
+    // XRef Table node — fetch structured data (node has pre-filled detail text)
+    if (node.label === 'XRef Table' && uploadId) {
+      fetchXRef(uploadId).then(d => setXrefData(d))
+    }
 
     // If the node already has detail text, use it directly
     if (node.detail) {
@@ -321,6 +329,12 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
             {!canShowImage && fontData && (
               <div className="detail-font-section">
                 <SimpleFontPane data={fontData} onJumpToObj={(num, _gen) => onJumpToObj(num)} />
+              </div>
+            )}
+
+            {xrefData && (
+              <div className="detail-xref-section">
+                <XRefPane data={xrefData} onJumpToObj={onJumpToObj} />
               </div>
             )}
           </div>

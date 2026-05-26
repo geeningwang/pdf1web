@@ -563,3 +563,31 @@ export async function fetchFontPane(
   if (!res.ok) return null
   return res.json()
 }
+
+/* -----------------------------------------------------------------------
+   XRef Table API
+   ----------------------------------------------------------------------- */
+
+export interface XRefEntry {
+  obj_num: number
+  etype: 'in_use' | 'free' | 'compressed'
+  offset: number
+  gen: number
+  stm_num?: number    // compressed only: object stream object number
+  stm_index?: number  // compressed only: index within object stream
+}
+
+export interface XRefData {
+  total: number
+  in_use: number
+  free: number
+  compressed: number
+  file_size: number
+  entries: XRefEntry[]
+}
+
+export async function fetchXRef(uploadId: string): Promise<XRefData | null> {
+  const res = await fetch(`${BASE}/xref/${uploadId}`)
+  if (!res.ok) return null
+  return res.json()
+}
