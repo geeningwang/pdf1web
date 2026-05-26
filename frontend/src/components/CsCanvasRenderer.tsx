@@ -267,17 +267,49 @@ function parseDashArray(raw: string): number[] {
   return (raw.match(/[-\d.]+/g) ?? []).map(Number).filter(v => !isNaN(v) && v >= 0)
 }
 
+// ── Invisible-text overlay compositor ─────────────────────────────────────
+
+/**
+ * Pixel-composite the invisible-text buffer onto the main canvas.
+ * For each pixel that was painted by Tr=3 text, compute a high-contrast
+ * colour based on the underlying colour-buffer pixel (perceptual luminance):
+ *   light background → deep blue,  dark background → bright cyan.
+ */
+function applyInvisibleOverlay(
+  ctx: CanvasRenderingContext2D,
+  invisibleCanvas: HTMLCanvasElement,
+  w: number,
+  h: number,
+): void {
+  const colorData = ctx.getImageData(0, 0, w, h)
+  const invData   = invisibleCanvas.getContext('2d')!.getImageData(0, 0, w, h)
+  const cd = colorData.data
+  const id = invData.data
+  for (let i = 0; i < id.length; i += 4) {
+    if (id[i + 3] < 128) continue                              // no invisible text here
+    const r = cd[i], g = cd[i + 1], b = cd[i + 2]
+    const L = 0.2126 * r + 0.7152 * g + 0.0722 * b            // perceptual luminance 0–255
+    const t = L / 255                                           // 0 = dark bg, 1 = light bg
+    // light bg (t→1) → deep blue;  dark bg (t→0) → bright cyan
+    cd[i]     = Math.round((1 - t) * 50)
+    cd[i + 1] = Math.round((1 - t) * 200)
+    cd[i + 2] = Math.round(200 + t * 55)
+    cd[i + 3] = 255
+  }
+  ctx.putImageData(colorData, 0, 0)
+}
+
 // ── main render function ────────────────────────────────────────────────────
 
 function renderOps(
   ctx: CanvasRenderingContext2D,
+  invisibleCtx: CanvasRenderingContext2D | null,
   data: ContentStreamData,
   loadedImages: Map<string, HTMLImageElement | HTMLCanvasElement>,
   loadedFontFamilies: Map<string, string>,
   loadedOtFonts: Map<string, opentype.Font>,
   cidToGidMaps: Map<string, Uint16Array | null>,
   maxOps?: number,
-  showInvisibleText?: boolean,
 ): void {
   const ops = maxOps !== undefined ? data.operations.slice(0, maxOps) : data.operations
   const fontResources = data.resources?.font ?? {}
@@ -317,14 +349,30 @@ function renderOps(
       if (bytes.length < 2) return
       const cidMap = cidToGidMaps.get(ts.fontName)  // null = Identity
       const isInvisible = ts.renderMode === 3
-      const doFill   = isInvisible ? !!showInvisibleText : (ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6)
+      const doFill   = isInvisible ? (invisibleCtx !== null) : (ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6)
       const doStroke = isInvisible ? false : (ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6)
+      if (!doFill && !doStroke) {
+        // invisible text, no invisible buffer — just advance
+        const bytes2 = rawTokenToBytes(rawToken)
+        for (let i = 0; i + 1 < bytes2.length; i += 2) {
+          const cid2 = (bytes2[i] << 8) | bytes2[i + 1]
+          const gid2 = (cidMap === null || cidMap === undefined) ? cid2 : (cid2 < cidMap.length ? cidMap[cid2] : 0)
+          let glyph2: opentype.Glyph | undefined
+          try { glyph2 = otFont.glyphs.get(gid2) } catch { /* skip */ }
+          const advW2 = (glyph2?.advanceWidth ?? otFont.unitsPerEm) / otFont.unitsPerEm
+          ts.tm = matMul([1, 0, 0, 1, (advW2 * ts.fontSize + ts.charSpacing) * hs, 0], ts.tm)
+        }
+        return
+      }
+      // Redirect invisible text to the invisible buffer; sync its CTM from ctx
+      const targetCtx = (isInvisible && invisibleCtx) ? invisibleCtx : ctx
+      if (isInvisible && invisibleCtx) invisibleCtx.setTransform(ctx.getTransform())
 
-      ctx.save()
-      ctx.transform(a, b, c, d, e, f)
-      ctx.transform(ts.fontSize * hs, 0, 0, -ts.fontSize, 0, ts.rise)
-      ctx.fillStyle   = (isInvisible && showInvisibleText) ? 'rgba(0,120,255,0.55)' : gs.fillColor
-      ctx.strokeStyle = gs.strokeColor
+      targetCtx.save()
+      targetCtx.transform(a, b, c, d, e, f)
+      targetCtx.transform(ts.fontSize * hs, 0, 0, -ts.fontSize, 0, ts.rise)
+      targetCtx.fillStyle   = isInvisible ? 'black' : gs.fillColor
+      targetCtx.strokeStyle = isInvisible ? 'black' : gs.strokeColor
 
       let xPos = 0
       let advTotal = 0
@@ -340,18 +388,18 @@ function renderOps(
 
         if ((doFill || doStroke) && glyph) {
           const otPath = glyph.getPath(xPos, 0, 1)
-          ctx.beginPath()
+          targetCtx.beginPath()
           for (const cmd of otPath.commands) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const c = cmd as any
-            if      (cmd.type === 'M') ctx.moveTo(c.x, c.y)
-            else if (cmd.type === 'L') ctx.lineTo(c.x, c.y)
-            else if (cmd.type === 'C') ctx.bezierCurveTo(c.x1, c.y1, c.x2, c.y2, c.x, c.y)
-            else if (cmd.type === 'Q') ctx.quadraticCurveTo(c.x1, c.y1, c.x, c.y)
-            else if (cmd.type === 'Z') ctx.closePath()
+            if      (cmd.type === 'M') targetCtx.moveTo(c.x, c.y)
+            else if (cmd.type === 'L') targetCtx.lineTo(c.x, c.y)
+            else if (cmd.type === 'C') targetCtx.bezierCurveTo(c.x1, c.y1, c.x2, c.y2, c.x, c.y)
+            else if (cmd.type === 'Q') targetCtx.quadraticCurveTo(c.x1, c.y1, c.x, c.y)
+            else if (cmd.type === 'Z') targetCtx.closePath()
           }
-          if (doFill)   ctx.fill('nonzero')
-          if (doStroke) ctx.stroke()
+          if (doFill)   targetCtx.fill('nonzero')
+          if (doStroke) targetCtx.stroke()
         }
 
         // Advance: advW in em units; charSpacing in text space → glyph space
@@ -360,8 +408,8 @@ function renderOps(
         advTotal += (advW_em * ts.fontSize + ts.charSpacing) * hs
       }
 
-      ctx.restore()
-      ctx.beginPath()  // clear stale glyph subpaths so later path-paint ops don't re-stroke them
+      targetCtx.restore()
+      targetCtx.beginPath()  // clear stale glyph subpaths so later path-paint ops don't re-stroke them
       ts.tm = matMul([1, 0, 0, 1, advTotal, 0], ts.tm)
 
     } else {
@@ -381,18 +429,21 @@ function renderOps(
       const firstChar = fontEntry?.first_char ?? 0
       const cmap      = fontEntry?.cmap ?? null
       const isInvisible = ts.renderMode === 3
-      const doFill   = isInvisible ? !!showInvisibleText : (ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6)
+      const doFill   = isInvisible ? (invisibleCtx !== null) : (ts.renderMode === 0 || ts.renderMode === 2 || ts.renderMode === 4 || ts.renderMode === 6)
       const doStroke = isInvisible ? false : (ts.renderMode === 1 || ts.renderMode === 2 || ts.renderMode === 5 || ts.renderMode === 6)
+      // Redirect invisible text to the invisible buffer; sync its CTM from ctx
+      const targetCtx = (isInvisible && invisibleCtx) ? invisibleCtx : ctx
+      if (isInvisible && invisibleCtx) invisibleCtx.setTransform(ctx.getTransform())
 
-      ctx.save()
-      ctx.transform(a, b, c, d, e, f)
-      ctx.transform(ts.fontSize * hs, 0, 0, -ts.fontSize, 0, ts.rise)
+      targetCtx.save()
+      targetCtx.transform(a, b, c, d, e, f)
+      targetCtx.transform(ts.fontSize * hs, 0, 0, -ts.fontSize, 0, ts.rise)
       const fontStyle = loadedFontFamilies.has(ts.fontName)
         ? `1px ${family}`
         : `${italic ? 'italic' : 'normal'} ${bold ? 'bold' : 'normal'} 1px ${family}`
-      ctx.font = fontStyle
-      ctx.fillStyle   = (isInvisible && showInvisibleText) ? 'rgba(0,120,255,0.55)' : gs.fillColor
-      ctx.strokeStyle = gs.strokeColor
+      targetCtx.font = fontStyle
+      targetCtx.fillStyle   = isInvisible ? 'black' : gs.fillColor
+      targetCtx.strokeStyle = isInvisible ? 'black' : gs.strokeColor
 
       // xPos in glyph-space canvas units (1 unit = em = fontSize text-space units * hs)
       // adv  in text-space units for ts.tm update
@@ -405,9 +456,11 @@ function renderOps(
           ? cmap[b]
           : (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : '')
 
-        if (charStr) {
-          if (doFill)   ctx.fillText(charStr, xPos, 0)
-          if (doStroke) ctx.strokeText(charStr, xPos, 0)
+        if (doFill || doStroke) {
+          if (charStr) {
+            if (doFill)   targetCtx.fillText(charStr, xPos, 0)
+            if (doStroke) targetCtx.strokeText(charStr, xPos, 0)
+          }
         }
 
         // Width lookup: use the PDF byte code b (not Unicode charCode) as the index
@@ -423,8 +476,8 @@ function renderOps(
         adv  += stepX * ts.fontSize * hs
       }
 
-      ctx.restore()
-      ctx.beginPath()  // clear stale glyph subpaths so later path-paint ops don't re-stroke them
+      targetCtx.restore()
+      targetCtx.beginPath()  // clear stale glyph subpaths so later path-paint ops don't re-stroke them
       ts.tm = matMul([1, 0, 0, 1, adv, 0], ts.tm)
     }
   }
@@ -560,7 +613,6 @@ function renderOps(
 
       // ── XObject ──────────────────────────────────────────────────────────
       case 'Do': {
-        if (showInvisibleText) break   // skip images so invisible text isn't buried under scan
         if (ops.length >= 1) {
           const name = ops[0].value.startsWith('/') ? ops[0].value.slice(1) : ops[0].value
           const img = loadedImages.get(name)
@@ -805,10 +857,18 @@ const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, ma
         loadedImages.set(name, colorImg)
       })
 
+    // Invisible-text offscreen buffer — always rendered; composited on demand
+    const invisibleOffscreen = document.createElement('canvas')
+    invisibleOffscreen.width  = canvas.width
+    invisibleOffscreen.height = canvas.height
+    const invCtx = invisibleOffscreen.getContext('2d')!
+    // Note: invCtx starts transparent; the PDF CTM is synced per-glyph via ctx.getTransform()
+
     Promise.all([...fontPromises, ...imagePromises]).then(() => {
       if (cancelled) return
       try {
-        renderOps(ctx, data, loadedImages, loadedFontFamilies, loadedOtFonts, cidToGidMaps, maxOps, showInvisibleText)
+        renderOps(ctx, invCtx, data, loadedImages, loadedFontFamilies, loadedOtFonts, cidToGidMaps, maxOps)
+        if (showInvisibleText) applyInvisibleOverlay(ctx, invisibleOffscreen, canvas.width, canvas.height)
         setStatus('done')
       } catch (err) {
         setStatus('error')
