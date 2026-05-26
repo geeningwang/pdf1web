@@ -513,6 +513,17 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         # Page thumbnail: Page.Thumb → image stream (no /Subtype /Image required)
         if kp == "Thumb":
             is_thumb = True
+        # Content stream: Page.Contents → stream (direct reference)
+        if kp == "Contents" and tn == "Page":
+            is_content_stream = True
+        # Content stream inside a Contents array: array[n] → stream, array.Contents → Page
+        if not is_content_stream:
+            parent_obj2 = doc.resolve_num(ref["from_num"], ref["from_gen"])
+            if parent_obj2 is not None and parent_obj2.is_array():
+                for arr_ref in backref_index.get(ref["from_num"], []):
+                    if arr_ref["key_path"] == "Contents" and arr_ref["type_name"] == "Page":
+                        is_content_stream = True
+                        break
 
     # Thumb images lack /Subtype /Image but are fully renderable via /api/image
     if is_thumb:
@@ -878,6 +889,23 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                 if tp.is_name() and tp.sval == 'Page':
                     page_obj = candidate
                     break
+        else:
+            # Handle streams inside a /Contents array: backref key_path is an array
+            # index like "[0]". Walk one level up: if the parent is an Array, check
+            # whether *that* array is referenced as /Contents of a Page.
+            parent_obj = doc.resolve_num(ref['from_num'], ref['from_gen'])
+            if parent_obj is not None and parent_obj.is_array():
+                for arr_ref in backref_index.get(ref['from_num'], []):
+                    arr_kp = arr_ref['key_path']
+                    if arr_kp == 'Contents' or arr_kp.startswith('Contents.'):
+                        candidate = doc.resolve_num(arr_ref['from_num'], arr_ref['from_gen'])
+                        if candidate is not None:
+                            tp = candidate.get('Type')
+                            if tp.is_name() and tp.sval == 'Page':
+                                page_obj = candidate
+                                break
+            if page_obj is not None:
+                break
 
     if page_obj is not None and media_box is None:
         mb = page_obj.get('MediaBox')

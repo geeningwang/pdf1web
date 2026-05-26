@@ -348,11 +348,6 @@ def parse_content_stream(data: bytes) -> dict | None:
 
     tokens = _tokenize(text)
 
-    # Quick check: must contain at least three known operators
-    op_count = sum(1 for t, v in tokens if t == 'op' and v in _OPS)
-    if op_count < 3:
-        return None
-
     operations: list[dict] = []
     operands: list[tuple[str, str]] = []
     skip_to_ei = False  # skip raw inline image data between ID and EI

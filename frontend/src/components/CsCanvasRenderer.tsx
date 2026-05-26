@@ -681,6 +681,8 @@ const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, ma
   const [errorMsg, setErrorMsg] = useState('')
 
   useEffect(() => {
+    let cancelled = false
+
     const mb = data.media_box
     if (!mb || mb.length < 4) {
       setStatus('error')
@@ -799,6 +801,7 @@ const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, ma
       })
 
     Promise.all([...fontPromises, ...imagePromises]).then(() => {
+      if (cancelled) return
       try {
         renderOps(ctx, data, loadedImages, loadedFontFamilies, loadedOtFonts, cidToGidMaps, maxOps)
         setStatus('done')
@@ -807,6 +810,8 @@ const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, ma
         setErrorMsg(String(err))
       }
     })
+
+    return () => { cancelled = true }
   }, [data, uploadId, maxOps])
 
   useImperativeHandle(ref, () => ({
