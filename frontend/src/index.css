@@ -1553,3 +1553,251 @@ html, body, #root {
   border-radius: 3px; padding: 1px 6px; color: var(--css-absent, #f87171);
 }
 .css-chip-hex { color: var(--text-dim); font-size: 10px; }
+
+/* ==========================================================================
+   SimpleFontPane
+   ========================================================================== */
+
+.sfp-root {
+  padding: 0 0 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* --- Header --- */
+.sfp-header {
+  padding: 10px 12px 8px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+}
+
+.sfp-sample-preview {
+  display: block;
+  font-size: 18px;
+  line-height: 1.5;
+  color: var(--text);
+  margin-bottom: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sfp-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.sfp-font-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.sfp-badge {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+
+.sfp-badge--subtype {
+  background: rgba(78,140,255,0.12);
+  border-color: rgba(78,140,255,0.35);
+  color: #6ea8fe;
+}
+
+.sfp-badge--encoding {
+  background: rgba(87,204,153,0.12);
+  border-color: rgba(87,204,153,0.35);
+  color: #57cc99;
+}
+
+.sfp-badge--embedded {
+  background: rgba(87,204,153,0.1);
+  border-color: rgba(87,204,153,0.3);
+  color: #57cc99;
+}
+
+.sfp-badge--notembedded {
+  background: rgba(244,162,97,0.1);
+  border-color: rgba(244,162,97,0.3);
+  color: #f4a261;
+}
+
+.sfp-badge--range {
+  background: rgba(167,139,250,0.1);
+  border-color: rgba(167,139,250,0.3);
+  color: #a78bfa;
+}
+
+.sfp-jump-btn {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.sfp-jump-btn:hover {
+  background: var(--bg3, #333);
+  border-color: var(--accent);
+}
+
+/* --- Sections --- */
+.sfp-section {
+  padding: 8px 12px 0;
+}
+
+.sfp-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.sfp-section-subtitle {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+.sfp-note {
+  color: #f4a261;
+}
+
+/* --- Widths chart --- */
+.sfp-widths-chart-wrap {
+  position: relative;
+  margin-bottom: 4px;
+}
+
+.sfp-widths-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+}
+
+.sfp-widths-svg {
+  display: block;
+  cursor: crosshair;
+}
+
+.sfp-widths-tooltip {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  padding: 2px 0;
+  min-height: 18px;
+}
+
+/* --- Character grid --- */
+.sfp-char-grid {
+  display: grid;
+  grid-template-columns: 28px repeat(16, 1fr);
+  gap: 2px;
+  font-size: 10px;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+
+.sfp-grid-corner {
+  /* empty top-left cell */
+}
+
+.sfp-col-head {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 1px 0;
+  opacity: 0.6;
+}
+
+.sfp-row-head {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: right;
+  padding-right: 4px;
+  line-height: 36px;
+  opacity: 0.6;
+}
+
+.sfp-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  overflow: hidden;
+  cursor: default;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.sfp-cell--defined {
+  background: var(--bg2);
+  border-color: var(--border);
+}
+.sfp-cell--defined:hover {
+  background: var(--bg3, #2a2a2a);
+  border-color: var(--accent);
+  z-index: 1;
+}
+
+.sfp-cell--unmapped {
+  background: transparent;
+  opacity: 0.25;
+}
+
+.sfp-cell--ctrl {
+  opacity: 0.3;
+}
+
+.sfp-cell-code {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-dim);
+  line-height: 1;
+  opacity: 0.6;
+}
+
+.sfp-cell-glyph {
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text);
+  user-select: none;
+}
+
+/* Width bar under the glyph */
+.sfp-cell-wbar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: rgba(78,140,255,0.55);
+  border-radius: 0 1px 1px 0;
+}
+
+.detail-font-section {
+  margin: 0;
+  padding: 0;
+}
+

@@ -29,6 +29,7 @@ export interface ObjectDetailResponse {
   is_palette: boolean
   is_tounicode: boolean
   is_font_descriptor: boolean
+  is_font: boolean
   is_ttf: boolean
   is_cid_to_gid_map: boolean
   is_cid_set: boolean
@@ -532,6 +533,33 @@ export async function fetchCidSet(
   gen: number,
 ): Promise<CidSetData | null> {
   const res = await fetch(`${BASE}/cid_set/${uploadId}/${num}/${gen}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+/* -----------------------------------------------------------------------
+   Simple Font (non-CID) character encoding API
+   ----------------------------------------------------------------------- */
+
+export interface FontPaneData {
+  base_font: string | null
+  subtype: string | null
+  encoding: string | null
+  first_char: number | null
+  last_char: number | null
+  widths: number[] | null
+  is_embedded: boolean
+  cmap: Record<string, string>  // byte index (as string) → unicode char
+  font_descriptor_num: number | null
+  to_unicode_num: number | null
+}
+
+export async function fetchFontPane(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<FontPaneData | null> {
+  const res = await fetch(`${BASE}/font/${uploadId}/${num}/${gen}`)
   if (!res.ok) return null
   return res.json()
 }

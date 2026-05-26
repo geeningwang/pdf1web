@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData, ToUnicodeData, FontDescriptorData, TtfTablesData, BackRefsData, CidToGidData, CidSetData } from '../api'
-import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, fetchCidToGid, fetchCidSet, imageUrl } from '../api'
+import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData, ToUnicodeData, FontDescriptorData, TtfTablesData, BackRefsData, CidToGidData, CidSetData, FontPaneData } from '../api'
+import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, fetchCidToGid, fetchCidSet, fetchFontPane, imageUrl } from '../api'
 import IccPane from './IccPane'
 import ImagePane from './ImagePane'
 import ContentStreamPane from './ContentStreamPane'
@@ -11,6 +11,7 @@ import FontDescriptorPane from './FontDescriptorPane'
 import TtfTablesPane, { GlyphGrid } from './TtfTablesPane'
 import CidToGidPane from './CidToGidPane'
 import CidSetPane from './CidSetPane'
+import SimpleFontPane from './SimpleFontPane'
 
 interface Props {
   node: TreeNode | null
@@ -63,6 +64,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
   const [ttfData, setTtfData] = useState<TtfTablesData | null>(null)
   const [cidToGidData, setCidToGidData] = useState<CidToGidData | null>(null)
   const [cidSetData, setCidSetData] = useState<CidSetData | null>(null)
+  const [fontData, setFontData] = useState<FontPaneData | null>(null)
   const [backRefs, setBackRefs] = useState<BackRefsData | null>(null)
   const [typeLabel, setTypeLabel] = useState<string | null>(null)
 
@@ -88,6 +90,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
     setTtfData(null)
     setCidToGidData(null)
     setCidSetData(null)
+    setFontData(null)
     setBackRefs(null)
     setTypeLabel(null)
     setError(null)
@@ -151,6 +154,10 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
         if (resp.is_cid_set) {
           fetchCidSet(uploadId, node.obj_num, node.gen_num)
             .then(d => setCidSetData(d))
+        }
+        if (resp.is_font) {
+          fetchFontPane(uploadId, node.obj_num, node.gen_num)
+            .then(d => setFontData(d))
         }
         // Always fetch back-references for any real object
         fetchBackRefs(uploadId, node.obj_num)
@@ -308,6 +315,12 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
             {!canShowImage && cidSetData && (
               <div className="detail-css-section">
                 <CidSetPane data={cidSetData} />
+              </div>
+            )}
+
+            {!canShowImage && fontData && (
+              <div className="detail-font-section">
+                <SimpleFontPane data={fontData} onJumpToObj={(num, _gen) => onJumpToObj(num)} />
               </div>
             )}
           </div>

@@ -440,6 +440,7 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     is_palette = False
     is_tounicode = False
     is_font_descriptor = False
+    is_font = False
     is_ttf = False
     is_cid_to_gid_map = False
     is_cid_set = False
@@ -447,10 +448,15 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     if obj and (obj.is_dict() or obj.type == PdfObjType.Stream):
         st = obj.get("Subtype")
         is_image = st.is_name() and st.sval == "Image"
-        # FontDescriptor dict
         type_obj2 = obj.get("Type")
+        # FontDescriptor dict
         if type_obj2.is_name() and type_obj2.sval == "FontDescriptor":
             is_font_descriptor = True
+        # Font dict (any subtype except Type0/CID — those lack a simple encoding)
+        if type_obj2.is_name() and type_obj2.sval == "Font":
+            st2 = obj.get("Subtype")
+            if not (st2.is_name() and st2.sval in ("Type0", "CIDFontType0", "CIDFontType2")):
+                is_font = True
         if obj.type == PdfObjType.Stream:
             from pdf.filters import flat_decode
             fobj = obj.get("Filter")
@@ -639,6 +645,7 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "is_palette": is_palette,
         "is_tounicode": is_tounicode,
         "is_font_descriptor": is_font_descriptor,
+        "is_font": is_font,
         "is_ttf": is_ttf,
         "is_cid_to_gid_map": is_cid_to_gid_map,
         "is_cid_set": is_cid_set,
@@ -716,6 +723,86 @@ def get_cid_to_gid(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "mapped_count": len(entries),
         "entries": entries[:5000],  # cap to avoid huge payloads
         "coverage_hex": coverage_hex,
+    }
+
+
+@app.get("/api/font/{upload_id}/{num}/{gen}")
+def get_font_info(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Return metadata and character encoding map for a simple (non-CID) Font dict."""
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+    obj = doc.resolve_num(num, gen)
+    if obj is None or not obj.is_dict():
+        raise HTTPException(404, "Object not found")
+
+    type_key = obj.get("Type")
+    if not (type_key.is_name() and type_key.sval == "Font"):
+        raise HTTPException(422, "Not a Font object")
+
+    base_font_obj = obj.get("BaseFont")
+    subtype_obj = obj.get("Subtype")
+    first_char_obj = obj.get("FirstChar")
+    last_char_obj = obj.get("LastChar")
+    widths_obj = obj.get("Widths")
+    enc_obj = obj.get("Encoding")
+
+    first_char = first_char_obj.ival if first_char_obj.is_int() else None
+    last_char = last_char_obj.ival if last_char_obj.is_int() else None
+    widths: list[float] | None = None
+    if widths_obj.is_array():
+        widths = []
+        for w in widths_obj.arr:
+            if w.is_int():
+                widths.append(float(w.ival))
+            elif w.is_real():
+                widths.append(w.dval)
+            else:
+                widths.append(0.0)
+
+    # Encoding name
+    enc_name: str | None = None
+    if enc_obj.is_name():
+        enc_name = enc_obj.sval
+    elif enc_obj.is_dict():
+        base_enc = enc_obj.get("BaseEncoding")
+        enc_name = f"Custom (base: {base_enc.sval})" if base_enc.is_name() else "Custom"
+
+    # Determine if the font has an embedded font file (via FontDescriptor)
+    is_embedded = False
+    fd_num: int | None = None
+    fd_ref = obj.get("FontDescriptor")
+    if fd_ref.is_ref():
+        fd_num = fd_ref.ref.num
+        fd_obj = doc.resolve_num(fd_ref.ref.num, fd_ref.ref.gen)
+        if fd_obj is not None and fd_obj.is_dict():
+            for ff_key in ("FontFile", "FontFile2", "FontFile3"):
+                if fd_obj.get(ff_key).is_ref():
+                    is_embedded = True
+                    break
+
+    # ToUnicode reference
+    to_unicode_num: int | None = None
+    tu_ref = obj.get("ToUnicode")
+    if tu_ref.is_ref():
+        to_unicode_num = tu_ref.ref.num
+
+    # Build encoding cmap (byte → unicode char)
+    raw_cmap = _build_encoding_cmap(obj)
+    # JSON keys must be strings
+    cmap = {str(k): v for k, v in raw_cmap.items()}
+
+    return {
+        "base_font": base_font_obj.sval if base_font_obj.is_name() else None,
+        "subtype": subtype_obj.sval if subtype_obj.is_name() else None,
+        "encoding": enc_name,
+        "first_char": first_char,
+        "last_char": last_char,
+        "widths": widths,
+        "is_embedded": is_embedded,
+        "cmap": cmap,
+        "font_descriptor_num": fd_num,
+        "to_unicode_num": to_unicode_num,
     }
 
 
@@ -799,6 +886,134 @@ def _parse_cmap_from_stream(obj: Any) -> dict[int, str]:
                         cmap[src] = '?'
 
     return cmap
+
+
+# ---------------------------------------------------------------------------
+# Standard PDF encoding helpers
+# ---------------------------------------------------------------------------
+
+# Minimal Adobe Glyph List for resolving Encoding /Differences names → unicode
+_ADOBE_GLYPH: dict[str, str] = {
+    'space': ' ', 'exclam': '!', 'quotedbl': '"', 'numbersign': '#',
+    'dollar': '$', 'percent': '%', 'ampersand': '&', 'quotesingle': "\u2019",
+    'parenleft': '(', 'parenright': ')', 'asterisk': '*', 'plus': '+',
+    'comma': ',', 'hyphen': '-', 'period': '.', 'slash': '/',
+    'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
+    'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9',
+    'colon': ':', 'semicolon': ';', 'less': '<', 'equal': '=', 'greater': '>',
+    'question': '?', 'at': '@',
+    'A': 'A', 'B': 'B', 'C': 'C', 'D': 'D', 'E': 'E', 'F': 'F', 'G': 'G',
+    'H': 'H', 'I': 'I', 'J': 'J', 'K': 'K', 'L': 'L', 'M': 'M', 'N': 'N',
+    'O': 'O', 'P': 'P', 'Q': 'Q', 'R': 'R', 'S': 'S', 'T': 'T', 'U': 'U',
+    'V': 'V', 'W': 'W', 'X': 'X', 'Y': 'Y', 'Z': 'Z',
+    'bracketleft': '[', 'backslash': '\\', 'bracketright': ']',
+    'asciicircum': '^', 'underscore': '_', 'grave': '`',
+    'a': 'a', 'b': 'b', 'c': 'c', 'd': 'd', 'e': 'e', 'f': 'f', 'g': 'g',
+    'h': 'h', 'i': 'i', 'j': 'j', 'k': 'k', 'l': 'l', 'm': 'm', 'n': 'n',
+    'o': 'o', 'p': 'p', 'q': 'q', 'r': 'r', 's': 's', 't': 't', 'u': 'u',
+    'v': 'v', 'w': 'w', 'x': 'x', 'y': 'y', 'z': 'z',
+    'braceleft': '{', 'bar': '|', 'braceright': '}', 'asciitilde': '~',
+    # Latin Extended
+    'Agrave': '\u00c0', 'Aacute': '\u00c1', 'Acircumflex': '\u00c2',
+    'Atilde': '\u00c3', 'Adieresis': '\u00c4', 'Aring': '\u00c5',
+    'AE': '\u00c6', 'Ccedilla': '\u00c7', 'Egrave': '\u00c8',
+    'Eacute': '\u00c9', 'Ecircumflex': '\u00ca', 'Edieresis': '\u00cb',
+    'Igrave': '\u00cc', 'Iacute': '\u00cd', 'Icircumflex': '\u00ce',
+    'Idieresis': '\u00cf', 'Eth': '\u00d0', 'Ntilde': '\u00d1',
+    'Ograve': '\u00d2', 'Oacute': '\u00d3', 'Ocircumflex': '\u00d4',
+    'Otilde': '\u00d5', 'Odieresis': '\u00d6', 'multiply': '\u00d7',
+    'Oslash': '\u00d8', 'Ugrave': '\u00d9', 'Uacute': '\u00da',
+    'Ucircumflex': '\u00db', 'Udieresis': '\u00dc', 'Yacute': '\u00dd',
+    'Thorn': '\u00de', 'germandbls': '\u00df',
+    'agrave': '\u00e0', 'aacute': '\u00e1', 'acircumflex': '\u00e2',
+    'atilde': '\u00e3', 'adieresis': '\u00e4', 'aring': '\u00e5',
+    'ae': '\u00e6', 'ccedilla': '\u00e7', 'egrave': '\u00e8',
+    'eacute': '\u00e9', 'ecircumflex': '\u00ea', 'edieresis': '\u00eb',
+    'igrave': '\u00ec', 'iacute': '\u00ed', 'icircumflex': '\u00ee',
+    'idieresis': '\u00ef', 'eth': '\u00f0', 'ntilde': '\u00f1',
+    'ograve': '\u00f2', 'oacute': '\u00f3', 'ocircumflex': '\u00f4',
+    'otilde': '\u00f5', 'odieresis': '\u00f6', 'divide': '\u00f7',
+    'oslash': '\u00f8', 'ugrave': '\u00f9', 'uacute': '\u00fa',
+    'ucircumflex': '\u00fb', 'udieresis': '\u00fc', 'yacute': '\u00fd',
+    'thorn': '\u00fe', 'ydieresis': '\u00ff',
+    # Common typographic
+    'fi': '\ufb01', 'fl': '\ufb02', 'ffi': '\ufb03', 'ffl': '\ufb04',
+    'endash': '\u2013', 'emdash': '\u2014',
+    'quotedblleft': '\u201c', 'quotedblright': '\u201d',
+    'quoteleft': '\u2018', 'quoteright': '\u2019',
+    'bullet': '\u2022', 'ellipsis': '\u2026',
+    'dagger': '\u2020', 'daggerdbl': '\u2021',
+    'trademark': '\u2122', 'registered': '\u00ae', 'copyright': '\u00a9',
+    'Euro': '\u20ac', 'euro': '\u20ac',
+    'degree': '\u00b0', 'mu': '\u00b5', 'paragraph': '\u00b6',
+    'periodcentered': '\u00b7', 'middot': '\u00b7',
+    'onesuperior': '\u00b9', 'twosuperior': '\u00b2', 'threesuperior': '\u00b3',
+    'onehalf': '\u00bd', 'onequarter': '\u00bc', 'threequarters': '\u00be',
+    'guillemotleft': '\u00ab', 'guillemotright': '\u00bb',
+    'guilsinglleft': '\u2039', 'guilsinglright': '\u203a',
+    'ordmasculine': '\u00ba', 'ordfeminine': '\u00aa',
+    'section': '\u00a7', 'yen': '\u00a5', 'sterling': '\u00a3', 'cent': '\u00a2',
+    'plusminus': '\u00b1', 'notsign': '\u00ac', 'brokenbar': '\u00a6',
+    'macron': '\u00af', 'cedilla': '\u00b8', 'acute': '\u00b4',
+    'dieresis': '\u00a8', 'circumflex': '\u02c6', 'tilde': '\u02dc',
+    'ring': '\u02da', 'exclamdown': '\u00a1', 'questiondown': '\u00bf',
+    'dotaccent': '\u02d9', 'caron': '\u02c7', 'breve': '\u02d8',
+    'hungarumlaut': '\u02dd', 'ogonek': '\u02db', 'dotlessi': '\u0131',
+    'Lslash': '\u0141', 'lslash': '\u0142',
+    'Scaron': '\u0160', 'scaron': '\u0161',
+    'Zcaron': '\u017d', 'zcaron': '\u017e',
+    'OE': '\u0152', 'oe': '\u0153', 'Ydieresis': '\u0178',
+    'notdef': '',
+}
+
+
+def _build_cmap_from_encoding_name(name: str) -> dict[int, str]:
+    """Return byte→unicode char map for a named PDF encoding."""
+    result: dict[int, str] = {}
+    if name == 'WinAnsiEncoding':
+        for b in range(32, 256):
+            try:
+                result[b] = bytes([b]).decode('cp1252')
+            except (ValueError, UnicodeDecodeError):
+                pass
+    elif name == 'MacRomanEncoding':
+        for b in range(32, 256):
+            try:
+                result[b] = bytes([b]).decode('mac_roman')
+            except (ValueError, UnicodeDecodeError):
+                pass
+    else:
+        # StandardEncoding / PDFDocEncoding / unknown → latin-1 approximation
+        for b in range(32, 256):
+            try:
+                result[b] = bytes([b]).decode('latin-1')
+            except (ValueError, UnicodeDecodeError):
+                pass
+    return result
+
+
+def _build_encoding_cmap(font_obj: Any) -> dict[int, str]:
+    """Build byte→unicode map from a Font dict's /Encoding entry."""
+    enc = font_obj.get('Encoding')
+    if enc.is_name():
+        return _build_cmap_from_encoding_name(enc.sval)
+    if enc.is_dict():
+        base_enc = enc.get('BaseEncoding')
+        base_name = base_enc.sval if base_enc.is_name() else 'StandardEncoding'
+        result = _build_cmap_from_encoding_name(base_name)
+        # Apply Differences: [code /name /name ... code /name ...]
+        diffs = enc.get('Differences')
+        if diffs.is_array():
+            code = 0
+            for item in diffs.arr:
+                if item.is_int():
+                    code = item.ival
+                elif item.is_name():
+                    result[code] = _ADOBE_GLYPH.get(item.sval, '?')
+                    code += 1
+        return result
+    # No Encoding entry — default WinAnsi for Latin fonts
+    return _build_cmap_from_encoding_name('WinAnsiEncoding')
 
 
 @app.get("/api/content_stream/{upload_id}/{num}/{gen}")
