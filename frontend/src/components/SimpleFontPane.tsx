@@ -210,9 +210,26 @@ interface ResolvedFont {
 
 const GENERICS = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui'])
 
-async function detectFont(fontStyle: FontStyle): Promise<ResolvedFont> {
-  await document.fonts.ready
+// Shared offscreen canvas for font metric comparisons
+const _fc = document.createElement('canvas').getContext('2d')!
 
+/**
+ * Detect if a named font is installed by comparing canvas text metrics.
+ * Uses monospace as the reference baseline (serif for monospace-like fonts).
+ * If the target font is installed, its metrics differ from the fallback.
+ */
+function isFontInstalled(family: string, style = 'normal', weight = 'normal'): boolean {
+  const testStr = 'mmmmmmmmmmlli'
+  const size = 72  // large size magnifies metric differences
+  const isLikelyMono = /courier|mono|console|typewriter/i.test(family)
+  const fallback = isLikelyMono ? 'serif' : 'monospace'
+  _fc.font = `${style} ${weight} ${size}px ${fallback}`
+  const baseW = _fc.measureText(testStr).width
+  _fc.font = `${style} ${weight} ${size}px "${family}", ${fallback}`
+  return _fc.measureText(testStr).width !== baseW
+}
+
+function detectFont(fontStyle: FontStyle): ResolvedFont {
   const families = fontStyle.family
     .split(',')
     .map(f => f.trim().replace(/^"|"$|^'|'$/g, ''))
@@ -222,10 +239,10 @@ async function detectFont(fontStyle: FontStyle): Promise<ResolvedFont> {
     if (GENERICS.has(family.toLowerCase())) {
       return { family: `${family} (generic)`, isFallback: i > 0, boldSynthesized: false, italicSynthesized: false }
     }
-    if (document.fonts.check(`1px "${family}"`)) {
+    if (isFontInstalled(family)) {
       // Check if the specific bold/italic variant exists or will be synthesized
-      const boldAvail   = fontStyle.weight === 'bold'   ? document.fonts.check(`bold 1px "${family}"`)   : true
-      const italicAvail = fontStyle.style  === 'italic' ? document.fonts.check(`italic 1px "${family}"`) : true
+      const boldAvail   = fontStyle.weight === 'bold'   ? isFontInstalled(family, 'normal', 'bold')   : true
+      const italicAvail = fontStyle.style  === 'italic' ? isFontInstalled(family, 'italic', 'normal') : true
       return {
         family,
         isFallback: i > 0,
@@ -234,7 +251,7 @@ async function detectFont(fontStyle: FontStyle): Promise<ResolvedFont> {
       }
     }
   }
-  return { family: families[families.length - 1], isFallback: true, boldSynthesized: false, italicSynthesized: false }
+  return { family: families[families.length - 1] + ' (generic)', isFallback: true, boldSynthesized: false, italicSynthesized: false }
 }
 
 const SimpleFontPane: React.FC<Props> = ({ data, onJumpToObj }) => {
@@ -242,9 +259,7 @@ const SimpleFontPane: React.FC<Props> = ({ data, onJumpToObj }) => {
   const [resolvedFont, setResolvedFont] = useState<ResolvedFont | null>(null)
 
   useEffect(() => {
-    let cancelled = false
-    detectFont(fontStyle).then(r => { if (!cancelled) setResolvedFont(r) })
-    return () => { cancelled = true }
+    setResolvedFont(detectFont(fontStyle))
   }, [fontStyle])
 
   const sampleText = "The quick brown fox jumps over the lazy dog. 0123456789"
