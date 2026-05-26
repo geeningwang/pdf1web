@@ -88,13 +88,16 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
   const displayed = data.operations
   const hiddenCount = 0
   const canRender = !!uploadId && !!data.media_box
+  const hasInvisibleText = data.operations.some(
+    op => op.op === 'Tr' && op.operands.length >= 1 && op.operands[0].value === '3'
+  )
 
   // default on if media_box is available
   const [showCanvas, setShowCanvas] = useState(canRender)
   const rendererRef = useRef<CsCanvasHandle>(null)
   const [partialInput, setPartialInput] = useState('')
   const [maxOps, setMaxOps] = useState<number | undefined>(undefined)
-  const [showInvisibleText, setShowInvisibleText] = useState(false)
+  const [invisibleMode, setInvisibleMode] = useState<0 | 1 | 2>(0)
 
   return (
     <div className="cs-pane">
@@ -149,13 +152,17 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
                 >
                   Save to PNG
                 </button>
-                <button
-                  className={`cs-render-toggle${showInvisibleText ? ' active' : ''}`}
-                  onClick={() => setShowInvisibleText(v => !v)}
-                  title="Highlight invisible text (render mode 3) in blue"
-                >
-                  {showInvisibleText ? 'Hide invisible text' : 'Show invisible text'}
-                </button>
+                {hasInvisibleText && (
+                  <button
+                    className={`cs-render-toggle${invisibleMode > 0 ? ' active' : ''}`}
+                    onClick={() => setInvisibleMode(m => ((m + 1) % 3) as 0 | 1 | 2)}
+                    title="Cycle: Visible only → Visible + Invisible → Invisible only"
+                  >
+                    {invisibleMode === 0 ? 'Visible only'
+                      : invisibleMode === 1 ? 'Visible + Invisible'
+                      : 'Invisible only'}
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -164,7 +171,7 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
 
       {/* Canvas renderer */}
       {canRender && showCanvas && (
-        <CsCanvasRenderer ref={rendererRef} data={data} uploadId={uploadId!} maxOps={maxOps} showInvisibleText={showInvisibleText} />
+        <CsCanvasRenderer ref={rendererRef} data={data} uploadId={uploadId!} maxOps={maxOps} invisibleMode={invisibleMode} />
       )}
 
       {/* Structure bar */}

@@ -28,7 +28,8 @@ interface Props {
   data: ContentStreamData
   uploadId: string
   maxOps?: number
-  showInvisibleText?: boolean
+  /** 0 = visible only  1 = visible + invisible  2 = invisible only */
+  invisibleMode?: 0 | 1 | 2
 }
 
 // ── numeric helpers ─────────────────────────────────────────────────────────
@@ -280,21 +281,31 @@ function applyInvisibleOverlay(
   invisibleCanvas: HTMLCanvasElement,
   w: number,
   h: number,
+  whiteBackground = false,
 ): void {
   const colorData = ctx.getImageData(0, 0, w, h)
   const invData   = invisibleCanvas.getContext('2d')!.getImageData(0, 0, w, h)
   const cd = colorData.data
   const id = invData.data
   for (let i = 0; i < id.length; i += 4) {
-    if (id[i + 3] < 128) continue                              // no invisible text here
-    const r = cd[i], g = cd[i + 1], b = cd[i + 2]
-    const L = 0.2126 * r + 0.7152 * g + 0.0722 * b            // perceptual luminance 0–255
-    const t = L / 255                                           // 0 = dark bg, 1 = light bg
-    // light bg (t→1) → deep blue;  dark bg (t→0) → bright cyan
-    cd[i]     = Math.round((1 - t) * 50)
-    cd[i + 1] = Math.round((1 - t) * 200)
-    cd[i + 2] = Math.round(200 + t * 55)
-    cd[i + 3] = 255
+    if (whiteBackground) {
+      // Mode 2 – invisible only: blank non-invisible pixels to white, paint invisible in blue
+      if (id[i + 3] >= 128) {
+        cd[i] = 0; cd[i + 1] = 0; cd[i + 2] = 200; cd[i + 3] = 255
+      } else {
+        cd[i] = 255; cd[i + 1] = 255; cd[i + 2] = 255; cd[i + 3] = 255
+      }
+    } else {
+      if (id[i + 3] < 128) continue                            // no invisible text here
+      const r = cd[i], g = cd[i + 1], b = cd[i + 2]
+      const L = 0.2126 * r + 0.7152 * g + 0.0722 * b          // perceptual luminance 0–255
+      const t = L / 255                                         // 0 = dark bg, 1 = light bg
+      // light bg (t→1) → deep blue;  dark bg (t→0) → bright cyan
+      cd[i]     = Math.round((1 - t) * 50)
+      cd[i + 1] = Math.round((1 - t) * 200)
+      cd[i + 2] = Math.round(200 + t * 55)
+      cd[i + 3] = 255
+    }
   }
   ctx.putImageData(colorData, 0, 0)
 }
@@ -731,7 +742,7 @@ async function compositeWithSMask(
   return off
 }
 
-const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, maxOps, showInvisibleText }, ref) => {
+const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, maxOps, invisibleMode = 0 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef   = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
@@ -868,7 +879,8 @@ const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, ma
       if (cancelled) return
       try {
         renderOps(ctx, invCtx, data, loadedImages, loadedFontFamilies, loadedOtFonts, cidToGidMaps, maxOps)
-        if (showInvisibleText) applyInvisibleOverlay(ctx, invisibleOffscreen, canvas.width, canvas.height)
+        if (invisibleMode === 1) applyInvisibleOverlay(ctx, invisibleOffscreen, canvas.width, canvas.height, false)
+        else if (invisibleMode === 2) applyInvisibleOverlay(ctx, invisibleOffscreen, canvas.width, canvas.height, true)
         setStatus('done')
       } catch (err) {
         setStatus('error')
@@ -877,7 +889,7 @@ const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, ma
     })
 
     return () => { cancelled = true }
-  }, [data, uploadId, maxOps, showInvisibleText])
+  }, [data, uploadId, maxOps, invisibleMode])
 
   useImperativeHandle(ref, () => ({
     savePng() {
