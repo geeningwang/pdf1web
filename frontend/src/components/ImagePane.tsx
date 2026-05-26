@@ -121,9 +121,13 @@ function FlatStructBar({ segs, total }: { segs: FlatStructureSegment[]; total: n
 
 interface Props {
   data: ImageDetailData
+  imageSrc?: string
+  isThumb?: boolean
+  imageError?: string | null
+  onImageError?: (msg: string) => void
 }
 
-const ImagePane: React.FC<Props> = ({ data }) => {
+const ImagePane: React.FC<Props> = ({ data, imageSrc, isThumb, imageError, onImageError }) => {
   const { jpeg } = data
   const fi = jpeg?.frame_info
 
@@ -156,31 +160,50 @@ const ImagePane: React.FC<Props> = ({ data }) => {
 
   return (
     <div className="img-pane">
-      {/* Header */}
-      <div className="img-header">
-        <span className="img-title">Image Properties</span>
-        {headerParts.length > 0 && (
-          <span className="img-subtitle"> · {headerParts.join('  ·  ')}</span>
+      <div className="img-fixed-top">
+        {/* Header */}
+        <div className="img-header">
+          <span className="img-title">Image Properties</span>
+          {headerParts.length > 0 && (
+            <span className="img-subtitle"> · {headerParts.join('  ·  ')}</span>
+          )}
+        </div>
+
+        {/* JPEG structure bar */}
+        {jpeg && jpeg.structure.length > 0 && (
+          <JpegStructBar segs={jpeg.structure} total={data.raw_size} />
+        )}
+
+        {/* CCITT structure bar */}
+        {data.ccitt && data.ccitt.structure.length > 0 && (
+          <CcittStructBar segs={data.ccitt.structure} total={data.ccitt.raw_size} />
+        )}
+
+        {/* FlateDecode structure bar */}
+        {data.flat && data.flat.structure.length > 0 && (
+          <FlatStructBar segs={data.flat.structure} total={data.flat.raw_size} />
         )}
       </div>
 
-      {/* JPEG structure bar */}
-      {jpeg && jpeg.structure.length > 0 && (
-        <JpegStructBar segs={jpeg.structure} total={data.raw_size} />
-      )}
+      <div className="img-scrollable-body">
+        {/* Image preview */}
+        {imageSrc && (
+          <div className="img-preview-section">
+            {isThumb && <div className="detail-thumb-label">Page Thumbnail</div>}
+            {imageError
+              ? <div className="detail-error">{imageError}</div>
+              : <img
+                  src={imageSrc}
+                  alt={isThumb ? 'Page thumbnail' : 'XObject image'}
+                  className="detail-image"
+                  onError={() => onImageError?.('Image could not be rendered (unsupported pixel format or filter)')}
+                />
+            }
+          </div>
+        )}
 
-      {/* CCITT structure bar */}
-      {data.ccitt && data.ccitt.structure.length > 0 && (
-        <CcittStructBar segs={data.ccitt.structure} total={data.ccitt.raw_size} />
-      )}
-
-      {/* FlateDecode structure bar */}
-      {data.flat && data.flat.structure.length > 0 && (
-        <FlatStructBar segs={data.flat.structure} total={data.flat.raw_size} />
-      )}
-
-      {/* Metadata table */}
-      <div className="img-section-label">Properties</div>
+        {/* Metadata table */}
+        <div className="img-section-label">Properties</div>
       <div className="img-meta-table">
         {metaRows.filter(([, v]) => v != null).map(([k, v]) => (
           <div key={k} className="img-meta-row">
@@ -282,6 +305,7 @@ const ImagePane: React.FC<Props> = ({ data }) => {
           </div>
         </>
       )}
+      </div>
     </div>
   )
 }

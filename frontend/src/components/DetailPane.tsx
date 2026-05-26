@@ -251,7 +251,19 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
               </div>
             )}
 
-            {canShowImage && (
+            {canShowImage && imageDetail && (
+              <div className="detail-image-meta-section">
+                <ImagePane
+                  data={imageDetail}
+                  imageSrc={imageUrl(uploadId!, node.obj_num, node.gen_num)}
+                  isThumb={isThumb}
+                  imageError={imageError}
+                  onImageError={msg => setImageError(msg)}
+                />
+              </div>
+            )}
+
+            {canShowImage && !imageDetail && (
               <div className="detail-image-section">
                 {isThumb && (
                   <div className="detail-thumb-label">Page Thumbnail</div>
@@ -269,12 +281,6 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
                     />
                   )
                 }
-              </div>
-            )}
-
-            {canShowImage && imageDetail && (
-              <div className="detail-image-meta-section">
-                <ImagePane data={imageDetail} />
               </div>
             )}
 
