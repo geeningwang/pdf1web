@@ -656,8 +656,7 @@ function renderOps(
           if (img) {
             ctx.save()
             ctx.transform(1, 0, 0, -1, 0, 1)
-            const src = img instanceof HTMLCanvasElement ? img : img
-            ctx.drawImage(src, 0, 0, 1, 1)
+            ctx.drawImage(img instanceof HTMLCanvasElement ? img : img, 0, 0, 1, 1)
             ctx.restore()
           }
         }

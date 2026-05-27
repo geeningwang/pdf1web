@@ -1700,6 +1700,101 @@ def get_ttf_raw(upload_id: str, num: int, gen: int) -> Response:
     return Response(content=data, media_type="application/octet-stream")
 
 
+# ── CCITT orientation helpers ────────────────────────────────────────────────
+
+def _decode_single_stream(obj: Any) -> bytes | None:
+    """Decode a single stream object (FlateDecode or raw)."""
+    from pdf.filters import flat_decode
+    fobj = obj.get("Filter")
+    if fobj.is_name() and fobj.sval == "FlateDecode":
+        try:
+            return flat_decode(obj.stream_raw)
+        except Exception:
+            return None
+    if fobj.is_null():
+        return obj.stream_raw
+    return None
+
+
+def _get_decoded_content_bytes(doc: PdfDocument, contents_obj: Any) -> bytes | None:
+    """Decode a page Contents value (direct stream or array of stream refs) to bytes."""
+    if contents_obj.type == PdfObjType.Reference:
+        contents_obj = doc.resolve_num(contents_obj.ref.num, contents_obj.ref.gen)
+    if contents_obj is None:
+        return None
+    if contents_obj.is_array():
+        chunks: list[bytes] = []
+        for item in contents_obj.arr:
+            if item.type == PdfObjType.Reference:
+                ref_obj = doc.resolve_num(item.ref.num, item.ref.gen)
+                if ref_obj and ref_obj.type == PdfObjType.Stream:
+                    chunk = _decode_single_stream(ref_obj)
+                    if chunk is not None:
+                        chunks.append(chunk)
+        return b"\n".join(chunks) if chunks else None
+    if contents_obj.type == PdfObjType.Stream:
+        return _decode_single_stream(contents_obj)
+    return None
+
+
+def _scan_cm_d_for_image(stream_bytes: bytes, img_name: str) -> float | None:
+    """Token-scan a decoded content stream for the cm.d operand just before Do /img_name."""
+    try:
+        tokens = stream_bytes.decode("latin-1").split()
+    except Exception:
+        return None
+    last_cm_d: float | None = None
+    for i, tok in enumerate(tokens):
+        if tok == "cm" and i >= 6:
+            try:
+                # Operand order: a b c d e f cm → d is at index i-3
+                last_cm_d = float(tokens[i - 3])
+            except (ValueError, IndexError):
+                pass
+        elif tok == "Do" and i >= 1:
+            name = tokens[i - 1].lstrip("/")
+            if name == img_name:
+                return last_cm_d
+    return None
+
+
+def _find_image_cm_d(session_id: str, doc: PdfDocument, obj_num: int) -> float | None:
+    """Return the cm.d value used to place this image in its page content stream."""
+    cache = _backref_cache.get(session_id)
+    if cache is None:
+        return None
+    for ref in cache.get(obj_num, []):
+        key_path = ref.get("key_path", "")
+        parts = key_path.split(".")
+        # key_path can be "Resources.XObject.ImN" (Resources inline in Page)
+        # or "XObject.ImN" (Resources is a separate indirect object)
+        if len(parts) < 2 or parts[-2] != "XObject":
+            continue
+        img_name = parts[-1]
+        from_num = ref["from_num"]
+        from_gen = ref.get("from_gen", 0)
+
+        # The container may be the Page itself (if Resources is inline)
+        # or the Resources dict (if Resources is an indirect object).
+        # Try the container first; if no Contents, walk up one level.
+        candidates = [doc.resolve_num(from_num, from_gen)]
+        for parent_ref in cache.get(from_num, []):
+            candidates.append(doc.resolve_num(parent_ref["from_num"], parent_ref.get("from_gen", 0)))
+
+        for container in candidates:
+            if container is None:
+                continue
+            contents = container.get("Contents")
+            if contents.is_null():
+                continue
+            stream_bytes = _get_decoded_content_bytes(doc, contents)
+            if not stream_bytes:
+                continue
+            cm_d = _scan_cm_d_for_image(stream_bytes, img_name)
+            if cm_d is not None:
+                return cm_d
+    return None
+
 
 @app.get("/api/image_detail/{upload_id}/{num}/{gen}")
 def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
@@ -1837,6 +1932,14 @@ def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
             bpc=flat_bpc,
         )
 
+    # For CCITT images stored bottom-to-top (signalled by negative cm.d placement),
+    # the ImagePane <img> tag needs a CSS scaleY(-1) to display correctly.
+    display_y_flip = False
+    if filter_name == "CCITTFaxDecode":
+        cm_d = _find_image_cm_d(upload_id, doc, num)
+        if cm_d is not None and cm_d < 0:
+            display_y_flip = True
+
     return {
         "width": width,
         "height": height,
@@ -1848,6 +1951,7 @@ def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "jpeg": jpeg_data,
         "ccitt": ccitt_data,
         "flat": flat_data,
+        "display_y_flip": display_y_flip,
     }
 
 

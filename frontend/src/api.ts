@@ -229,6 +229,7 @@ export interface ImageDetailData {
   } | null
   ccitt: CcittData | null
   flat: FlatData | null
+  display_y_flip?: boolean
 }
 
 export async function fetchImageDetail(

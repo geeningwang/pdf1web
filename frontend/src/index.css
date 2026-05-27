@@ -879,6 +879,33 @@ html, body, #root {
   border-bottom: 1px solid var(--border);
 }
 
+.img-flip-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-self: flex-start;
+}
+.img-flip-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg2);
+  color: var(--text);
+  cursor: pointer;
+}
+.img-flip-btn:hover { background: var(--bg3); }
+.img-flip-btn.active {
+  background: var(--accent, #0078d4);
+  color: #fff;
+  border-color: transparent;
+}
+.img-flip-note {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
 .img-header {
   margin-bottom: 8px;
   line-height: 1.4;

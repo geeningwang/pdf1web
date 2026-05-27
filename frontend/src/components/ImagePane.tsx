@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import type { ImageDetailData, JpegStructureSegment, CcittStructureSegment, FlatStructureSegment } from '../api'
 
 // ------------------------------------------------------------------ helpers
@@ -128,6 +128,7 @@ interface Props {
 }
 
 const ImagePane: React.FC<Props> = ({ data, imageSrc, isThumb, imageError, onImageError }) => {
+  const [flipped, setFlipped] = useState(false)
   const { jpeg } = data
   const fi = jpeg?.frame_info
 
@@ -190,12 +191,25 @@ const ImagePane: React.FC<Props> = ({ data, imageSrc, isThumb, imageError, onIma
         {imageSrc && (
           <div className="img-preview-section">
             {isThumb && <div className="detail-thumb-label">Page Thumbnail</div>}
+            {data.display_y_flip && (
+              <div className="img-flip-bar">
+                <button
+                  className={`img-flip-btn${flipped ? ' active' : ''}`}
+                  onClick={() => setFlipped(f => !f)}
+                  title="Toggle vertical flip (image is stored inverted in the PDF)"
+                >
+                  ↕ Flip Vertical
+                </button>
+                <span className="img-flip-note">stored inverted in PDF (cm.d &lt; 0)</span>
+              </div>
+            )}
             {imageError
               ? <div className="detail-error">{imageError}</div>
               : <img
                   src={imageSrc}
                   alt={isThumb ? 'Page thumbnail' : 'XObject image'}
                   className="detail-image"
+                  style={flipped ? { transform: 'scaleY(-1)' } : undefined}
                   onError={() => onImageError?.('Image could not be rendered (unsupported pixel format or filter)')}
                 />
             }
