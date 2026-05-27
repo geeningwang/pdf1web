@@ -254,6 +254,16 @@ def _classify_object(
                 return "CID Set"
             if kp == "Info" and tn == "Trailer":
                 return "Document Info"
+            if kp == "PageLabels" and tn == "Catalog":
+                return "Page Labels Number Tree"
+            if kp.startswith("Nums.") and obj.is_dict():
+                parent_refs = backref_index.get(from_num, [])
+                if any(pr.get("key_path") == "PageLabels" for pr in parent_refs):
+                    return "Page Label"
+            if kp == "Length":
+                parent = doc.resolve_num(from_num, 0)
+                if parent and parent.type == PdfObjType.Stream:
+                    return "Stream Length"
             if kp == "DecodeParms":
                 return "Decode Parameters"
             if kp == "Resources":
@@ -293,6 +303,9 @@ def _classify_object(
 
         # ── Dict / Stream ─────────────────────────────────────────────
         if obj.is_dict() or obj.type == PdfObjType.Stream:
+            # Linearization parameter dictionary (first obj in file, no backrefs)
+            if obj.is_dict() and obj.get("Linearized").is_int():
+                return "Linearization Dictionary"
             st = obj.get("Subtype")
             if st.is_name() and st.sval == "Image":
                 fobj = obj.get("Filter")
@@ -315,6 +328,21 @@ def _classify_object(
                         up = arr_refs[0]["type_name"] if arr_refs else ""
                         return f"Stream of {up}" if up and up not in ("", "unknown") else "Stream"
                     return f"Stream of {ptype}" if ptype and ptype not in ("", "unknown") else "Stream"
+                # No backrefs — check if this is a linearization hint stream
+                # (referenced by file offset in /H of a linearization dict, not as an indirect ref)
+                xe_self = doc._xref.entries.get(num)
+                if xe_self:
+                    from pdf.xref import XrefEntryType as _XET
+                    for lnum, lxe in doc._xref.entries.items():
+                        if lxe.etype not in (_XET.InUse, _XET.Compressed):
+                            continue
+                        lobj = doc.resolve_num(lnum, lxe.gen)
+                        if lobj and lobj.is_dict() and lobj.get("Linearized").is_int():
+                            h = lobj.get("H")
+                            if h.is_array():
+                                for i in range(0, len(h.arr), 2):
+                                    if i < len(h.arr) and h.arr[i].is_int() and h.arr[i].ival == xe_self.offset:
+                                        return "Linearization Hint Stream"
                 return "Stream"
             return "Dictionary"
 
