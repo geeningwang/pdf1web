@@ -1940,6 +1940,9 @@ def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         if cm_d is not None and cm_d < 0:
             display_y_flip = True
 
+    im_obj = obj.get("ImageMask")
+    is_image_mask = im_obj.type.name == "Boolean" and im_obj.bval
+
     return {
         "width": width,
         "height": height,
@@ -1952,6 +1955,7 @@ def get_image_detail(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "ccitt": ccitt_data,
         "flat": flat_data,
         "display_y_flip": display_y_flip,
+        "is_image_mask": is_image_mask,
     }
 
 
@@ -2192,7 +2196,20 @@ def _ccitt_fax_to_png(obj: Any) -> bytes | None:
 
     try:
         img = Image.open(io.BytesIO(tiff_bytes))
-        raw_pixels = img.convert("L").tobytes()
+        img_l = img.convert("L")
+
+        # ImageMask=true: stencil mask — black bits paint, white bits are transparent.
+        # Serve as RGBA PNG so white pixels are transparent and underlying graphics show through.
+        im_obj = obj.get("ImageMask")
+        if im_obj.type.name == "Boolean" and im_obj.bval:
+            alpha = img_l.point(lambda p: 0 if p > 128 else 255)
+            black = Image.new("L", (width, height), 0)
+            img_rgba = Image.merge("RGBA", (black, black, black, alpha))
+            buf = io.BytesIO()
+            img_rgba.save(buf, format="PNG")
+            return buf.getvalue()
+
+        raw_pixels = img_l.tobytes()
     except Exception:
         return None
 

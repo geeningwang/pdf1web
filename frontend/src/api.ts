@@ -230,6 +230,7 @@ export interface ImageDetailData {
   ccitt: CcittData | null
   flat: FlatData | null
   display_y_flip?: boolean
+  is_image_mask?: boolean
 }
 
 export async function fetchImageDetail(

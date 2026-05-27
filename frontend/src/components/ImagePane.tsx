@@ -209,7 +209,10 @@ const ImagePane: React.FC<Props> = ({ data, imageSrc, isThumb, imageError, onIma
                   src={imageSrc}
                   alt={isThumb ? 'Page thumbnail' : 'XObject image'}
                   className="detail-image"
-                  style={flipped ? { transform: 'scaleY(-1)' } : undefined}
+                  style={{
+                    ...(data?.is_image_mask ? { backgroundColor: 'white' } : {}),
+                    ...(flipped ? { transform: 'scaleY(-1)' } : {}),
+                  }}
                   onError={() => onImageError?.('Image could not be rendered (unsupported pixel format or filter)')}
                 />
             }
