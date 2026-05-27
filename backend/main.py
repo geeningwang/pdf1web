@@ -984,13 +984,18 @@ def get_hint_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                         all_obj_offsets.append((parent_off, num))
             all_obj_offsets.sort()
 
+            backref_index = _backref_cache.get(upload_id, {})
             for p in hint_pages:
                 sec_start = p["section_offset"]
                 sec_end = sec_start + p["page_length"]
-                p["deduced_objects"] = sorted(
+                nums_in = sorted(
                     num for off, num in all_obj_offsets
                     if sec_start <= off < sec_end
                 )
+                p["deduced_objects"] = [
+                    {"num": num, "obj_type": _classify_object(num, 0, doc, backref_index)}
+                    for num in nums_in
+                ]
 
     # Annotate each shared group with a semantic type label for its lead object
     if hint_tables.get("shared_groups"):

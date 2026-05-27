@@ -629,6 +629,11 @@ export interface PageHintHeader {
   shared_denom: number
 }
 
+export interface DeducedObjectEntry {
+  num: number
+  obj_type: string
+}
+
 export interface PageHintEntry {
   nobjects: number
   page_length: number
@@ -637,7 +642,7 @@ export interface PageHintEntry {
   nshared: number
   shared_ids: number[]
   section_offset?: number
-  deduced_objects?: number[]
+  deduced_objects?: DeducedObjectEntry[]
 }
 
 export interface SharedHintHeader {

@@ -347,7 +347,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
 
             {hintStreamData && (
               <div className="detail-hs-section">
-                <HintStreamPane data={hintStreamData} />
+                <HintStreamPane data={hintStreamData} onJumpToObj={onJumpToObj} />
               </div>
             )}
 

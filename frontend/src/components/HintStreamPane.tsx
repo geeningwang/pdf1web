@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo } from 'react'
-import type { HintStreamData } from '../api'
+import type { HintStreamData, PageHintEntry } from '../api'
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -63,11 +63,93 @@ const LIN_PARAM_ROWS: {
   { key: 'hint_length',        label: 'Hint stream length',    pdfKey: '/H[1]', desc: 'Byte length of the hint stream in the file', fmt: fmtBytes },
 ]
 
-interface Props {
-  data: HintStreamData
+// ---------------------------------------------------------------------------
+// Page layout bar — proportional blocks per page section
+// ---------------------------------------------------------------------------
+const PAGE_PALETTE = [
+  '#3b82f6', '#2e9e6b', '#c97a1a', '#7c52b2',
+  '#b03e3e', '#1a8fa0', '#8a7c2e', '#5c7a3e',
+  '#c94f8a', '#4a8080', '#6d7c2e', '#8a4a2e',
+]
+
+interface PageLayoutBarProps {
+  pages: PageHintEntry[]
+  fileLength: number
 }
 
-export default function HintStreamPane({ data }: Props) {
+function PageLayoutBar({ pages, fileLength }: PageLayoutBarProps) {
+  const [hovered, setHovered] = useState<number | null>(null)
+
+  const segments = useMemo(() => {
+    if (!fileLength || pages.length === 0) return []
+    const sorted = pages
+      .map((p, i) => ({ p, i }))
+      .filter(({ p }) => p.section_offset != null && p.page_length > 0)
+      .sort((a, b) => a.p.section_offset! - b.p.section_offset!)
+    if (sorted.length === 0) return []
+
+    type Seg = { kind: 'page' | 'gap'; pageIdx?: number; start: number; end: number }
+    const segs: Seg[] = []
+    let prev = 0
+    for (const { p, i } of sorted) {
+      const start = p.section_offset!
+      const end = start + p.page_length
+      if (start > prev) segs.push({ kind: 'gap', start: prev, end: start })
+      segs.push({ kind: 'page', pageIdx: i, start, end })
+      prev = end
+    }
+    if (fileLength > prev) segs.push({ kind: 'gap', start: prev, end: fileLength })
+    return segs
+  }, [pages, fileLength])
+
+  if (segments.length === 0) return null
+
+  const hex = (n: number) => '0x' + n.toString(16).toUpperCase().padStart(6, '0')
+
+  return (
+    <div className="hs-layout-wrap">
+      <div className="hs-layout-bar">
+        {segments.map((seg, i) => {
+          const size = seg.end - seg.start
+          if (seg.kind === 'gap') {
+            return (
+              <div
+                key={`gap-${i}`}
+                className="hs-layout-seg hs-layout-seg--gap"
+                style={{ flex: Math.max(size, 1) }}
+                title={`Preamble / shared / xref: ${hex(seg.start)}–${hex(seg.end - 1)} (${size.toLocaleString()} B)`}
+              />
+            )
+          }
+          const pageIdx = seg.pageIdx!
+          const color = PAGE_PALETTE[pageIdx % PAGE_PALETTE.length]
+          const isHov = hovered === pageIdx
+          return (
+            <div
+              key={`page-${pageIdx}`}
+              className={`hs-layout-seg hs-layout-seg--page${isHov ? ' hs-layout-seg--hov' : ''}`}
+              style={{ flex: Math.max(size, 1), background: color }}
+              onMouseEnter={() => setHovered(pageIdx)}
+              onMouseLeave={() => setHovered(null)}
+              title={`Page ${pageIdx}: ${hex(seg.start)}–${hex(seg.end - 1)} (${size.toLocaleString()} B)`}
+            />
+          )
+        })}
+      </div>
+      <div className="hs-layout-ends">
+        <span>0</span>
+        <span>{fileLength.toLocaleString()} B</span>
+      </div>
+    </div>
+  )
+}
+
+interface Props {
+  data: HintStreamData
+  onJumpToObj: (num: number) => void
+}
+
+export default function HintStreamPane({ data, onJumpToObj }: Props) {
   const lp = data.lin_params
   const [groupFilter, setGroupFilter] = useState<string>('')
   const sharedSectionRef = useRef<HTMLDivElement>(null)
@@ -173,6 +255,9 @@ export default function HintStreamPane({ data }: Props) {
       {data.pages && data.pages.length > 0 && (
         <div className="hs-section">
           <div className="hs-section-label">Per-page data ({data.pages.length} pages)</div>
+          {data.lin_params?.file_length && (
+            <PageLayoutBar pages={data.pages} fileLength={data.lin_params.file_length} />
+          )}
           <div className="hs-scroll-table-wrap">
             <table className="hs-table hs-page-table">
               <thead>
@@ -202,20 +287,35 @@ export default function HintStreamPane({ data }: Props) {
                       <td className="hs-td-num">{p.section_offset != null ? `@${p.section_offset}` : '—'}</td>
                       <td className="hs-td-num">{p.nobjects}</td>
                       <td className="hs-td-num">{fmtBytes(p.page_length)}</td>
-                      <td className="hs-td-num">
+                      <td className="hs-td hs-td-deduced">
                         {(() => {
                           const objs = p.deduced_objects ?? []
                           const count = objs.length
                           const mismatch = count !== p.nobjects
-                          return <>
-                            <span
-                              style={{ fontWeight: 'bold', color: mismatch ? '#c0392b' : '#27ae60', marginRight: 4 }}
-                              title={mismatch ? `Count mismatch: deduced ${count} but hint table says ${p.nobjects}` : `Count matches hint table (${p.nobjects})`}
-                            >
-                              [{count}/{p.nobjects}]
-                            </span>
-                            {count > 0 ? objs.join(', ') : '\u2014'}
-                          </>
+                          return (
+                            <div className="hs-deduced-list">
+                              {mismatch && (
+                                <span
+                                  className="hs-deduced-mismatch"
+                                  title={`Count mismatch: deduced ${count} but hint table says ${p.nobjects}`}
+                                >
+                                  [{count}/{p.nobjects}]
+                                </span>
+                              )}
+                              {count > 0
+                                ? objs.map(o => (
+                                  <button
+                                    key={o.num}
+                                    className="hs-obj-link"
+                                    onClick={e => { e.stopPropagation(); onJumpToObj(o.num) }}
+                                  >
+                                    obj {o.num} <span className="hs-obj-type">[{o.obj_type}]</span>
+                                  </button>
+                                ))
+                                : '\u2014'
+                              }
+                            </div>
+                          )
                         })()}
                       </td>
                       <td className="hs-td-num"><span style={{ textDecoration: 'line-through' }}>{p.content_offset}</span></td>
@@ -286,8 +386,7 @@ export default function HintStreamPane({ data }: Props) {
               <thead>
                 <tr>
                   <th className="hs-th hs-th-num">Group #</th>
-                  <th className="hs-th hs-th-num">PDF object</th>
-                  <th className="hs-th">Type</th>
+                  <th className="hs-th">PDF Object</th>
                   <th className="hs-th hs-th-num">Objects</th>
                   <th className="hs-th hs-th-num">Length</th>
                   <th className="hs-th hs-th-num">Section</th>
@@ -300,8 +399,15 @@ export default function HintStreamPane({ data }: Props) {
                   .map(({ g, i }) => (
                     <tr key={i} className={i % 2 === 0 ? 'hs-row-even' : 'hs-row-odd'}>
                       <td className="hs-td-num">{i}</td>
-                      <td className="hs-td-num" style={{ fontFamily: 'monospace' }}>obj {g.first_obj}</td>
-                      <td className="hs-td hs-td-type">{g.obj_type ?? '\u2014'}</td>
+                      <td className="hs-td">
+                        <button
+                          className="hs-obj-link"
+                          onClick={() => onJumpToObj(g.first_obj)}
+                        >
+                          obj {g.first_obj}
+                        </button>
+                        {g.obj_type && <span className="hs-obj-type"> [{g.obj_type}]</span>}
+                      </td>
                       <td className="hs-td-num">{g.nobjects}</td>
                       <td className="hs-td-num">{fmtBytes(g.group_length)}</td>
                       <td className="hs-td-num">

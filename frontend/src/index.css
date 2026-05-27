@@ -2376,3 +2376,61 @@ tr:hover .hs-page-click-hint { opacity: 1; }
 
 .hs-td-type { font-size: 11px; padding: 2px 8px; color: var(--fg, #e6edf3); }
 
+/* Page layout bar */
+.hs-layout-wrap { margin-bottom: 8px; }
+.hs-layout-bar {
+  display: flex;
+  height: 22px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg3, #1a1a1a);
+  border: 1px solid var(--border, #30363d);
+}
+.hs-layout-seg {
+  height: 100%;
+  min-width: 1px;
+  cursor: default;
+  transition: filter 0.1s;
+}
+.hs-layout-seg--gap { background: var(--bg3, #1a1a1a); }
+.hs-layout-seg--page { opacity: 0.85; }
+.hs-layout-seg--hov, .hs-layout-seg--page:hover { opacity: 1; filter: brightness(1.25); }
+.hs-layout-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--fg3, #8b949e);
+  margin-top: 2px;
+}
+
+/* Deduced objects cell */
+.hs-td-deduced { padding: 3px 6px; vertical-align: top; }
+.hs-deduced-list { display: flex; flex-wrap: wrap; gap: 2px 6px; }
+.hs-deduced-mismatch {
+  color: #c0392b;
+  font-weight: 700;
+  font-size: 10px;
+  margin-right: 2px;
+  white-space: nowrap;
+}
+
+/* Object links (used in deduced objects + shared groups) */
+.hs-obj-link {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 11px;
+  color: #58a6ff;
+  padding: 0;
+  white-space: nowrap;
+  text-align: left;
+  line-height: 1.4;
+}
+.hs-obj-link:hover { text-decoration: underline; color: #79b8ff; }
+.hs-obj-type {
+  color: var(--fg3, #8b949e);
+  font-size: 10px;
+  font-family: inherit;
+}
+
