@@ -75,11 +75,11 @@ const PAGE_PALETTE = [
 interface PageLayoutBarProps {
   pages: PageHintEntry[]
   fileLength: number
+  hoveredPage: number | null
+  onHoverPage: (i: number | null) => void
 }
 
-function PageLayoutBar({ pages, fileLength }: PageLayoutBarProps) {
-  const [hovered, setHovered] = useState<number | null>(null)
-
+function PageLayoutBar({ pages, fileLength, hoveredPage, onHoverPage }: PageLayoutBarProps) {
   const segments = useMemo(() => {
     if (!fileLength || pages.length === 0) return []
     const sorted = pages
@@ -123,14 +123,14 @@ function PageLayoutBar({ pages, fileLength }: PageLayoutBarProps) {
           }
           const pageIdx = seg.pageIdx!
           const color = PAGE_PALETTE[pageIdx % PAGE_PALETTE.length]
-          const isHov = hovered === pageIdx
+          const isHov = hoveredPage === pageIdx
           return (
             <div
               key={`page-${pageIdx}`}
               className={`hs-layout-seg hs-layout-seg--page${isHov ? ' hs-layout-seg--hov' : ''}`}
               style={{ flex: Math.max(size, 1), background: color }}
-              onMouseEnter={() => setHovered(pageIdx)}
-              onMouseLeave={() => setHovered(null)}
+              onMouseEnter={() => onHoverPage(pageIdx)}
+              onMouseLeave={() => onHoverPage(null)}
               title={`Page ${pageIdx}: ${hex(seg.start)}–${hex(seg.end - 1)} (${size.toLocaleString()} B)`}
             />
           )
@@ -152,6 +152,7 @@ interface Props {
 export default function HintStreamPane({ data, onJumpToObj }: Props) {
   const lp = data.lin_params
   const [groupFilter, setGroupFilter] = useState<string>('')
+  const [hoveredPage, setHoveredPage] = useState<number | null>(null)
   const sharedSectionRef = useRef<HTMLDivElement>(null)
   const filterInputRef = useRef<HTMLInputElement>(null)
 
@@ -256,7 +257,12 @@ export default function HintStreamPane({ data, onJumpToObj }: Props) {
         <div className="hs-section">
           <div className="hs-section-label">Per-page data ({data.pages.length} pages)</div>
           {data.lin_params?.file_length && (
-            <PageLayoutBar pages={data.pages} fileLength={data.lin_params.file_length} />
+            <PageLayoutBar
+              pages={data.pages}
+              fileLength={data.lin_params.file_length}
+              hoveredPage={hoveredPage}
+              onHoverPage={setHoveredPage}
+            />
           )}
           <div className="hs-scroll-table-wrap">
             <table className="hs-table hs-page-table">
@@ -279,9 +285,8 @@ export default function HintStreamPane({ data, onJumpToObj }: Props) {
                     <tr
                       key={i}
                       className={i % 2 === 0 ? 'hs-row-even' : 'hs-row-odd'}
-                      style={clickable ? { cursor: 'pointer' } : undefined}
-                      title={clickable ? 'Click to filter Shared groups table by these IDs' : undefined}
-                      onClick={clickable ? () => handlePageRowClick(p.shared_ids) : undefined}
+                      onMouseEnter={() => setHoveredPage(i)}
+                      onMouseLeave={() => setHoveredPage(null)}
                     >
                       <td className="hs-td-num">{i}</td>
                       <td className="hs-td-num">{p.section_offset != null ? `@${p.section_offset}` : '—'}</td>
@@ -320,7 +325,12 @@ export default function HintStreamPane({ data, onJumpToObj }: Props) {
                       </td>
                       <td className="hs-td-num"><span style={{ textDecoration: 'line-through' }}>{p.content_offset}</span></td>
                       <td className="hs-td-num"><span style={{ textDecoration: 'line-through' }}>{p.content_length}</span></td>
-                      <td className="hs-td-num" style={{ fontFamily: 'monospace' }}>
+                      <td
+                        className="hs-td-num"
+                        style={{ fontFamily: 'monospace', cursor: clickable ? 'pointer' : undefined }}
+                        title={clickable ? 'Click to filter Shared groups table by these IDs' : undefined}
+                        onClick={clickable ? () => handlePageRowClick(p.shared_ids) : undefined}
+                      >
                         {p.nshared === 0
                           ? '\u2014'
                           : i === 0
