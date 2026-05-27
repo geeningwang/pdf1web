@@ -414,9 +414,8 @@ export default function HintStreamPane({ data, onJumpToObj }: Props) {
                           className="hs-obj-link"
                           onClick={() => onJumpToObj(g.first_obj)}
                         >
-                          obj {g.first_obj}
+                          obj {g.first_obj}{g.obj_type && <span className="hs-obj-type"> [{g.obj_type}]</span>}
                         </button>
-                        {g.obj_type && <span className="hs-obj-type"> [{g.obj_type}]</span>}
                       </td>
                       <td className="hs-td-num">{g.nobjects}</td>
                       <td className="hs-td-num">{fmtBytes(g.group_length)}</td>
