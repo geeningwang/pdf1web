@@ -627,9 +627,231 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "is_ttf": is_ttf,
         "is_cid_to_gid_map": is_cid_to_gid_map,
         "is_cid_set": is_cid_set,
+        "is_hint_stream": (type_label == "Linearization Hint Stream"),
         "image_filter": image_filter,
         "obj_num": num,
         "gen_num": gen,
+    }
+
+
+def _parse_hint_stream(raw: bytes, n_pages: int, shared_offset: int) -> dict[str, Any]:
+    """Parse the binary linearization hint tables from the decoded stream bytes.
+
+    Field sizes follow the qpdf reference implementation (QPDF_linearization.cc):
+    - Page hints header: 32+32+16+32+16+32+16+32+16+16+16+16+16 = 288 bits (36 bytes)
+    - Each nbits_* field in the header is 16 bits (NOT 4).
+    - Per-page rows are each padded to the next byte boundary after all pages.
+    - Shared hints header: 32+32+32+32+16+32+16 = 192 bits (24 bytes)
+    """
+    bits = "".join(f"{b:08b}" for b in raw)
+    pos = 0
+
+    def rb(n: int) -> int:
+        nonlocal pos
+        v = int(bits[pos : pos + n], 2) if n else 0
+        pos += n
+        return v
+
+    def skip_byte():
+        nonlocal pos
+        rem = pos % 8
+        if rem:
+            pos += 8 - rem
+
+    # ── Page Offset Hints Table header ───────────────────────────────────────
+    min_nobjects       = rb(32)
+    first_page_offset  = rb(32)
+    nbits_dn           = rb(16)   # delta nobjects bits
+    min_page_length    = rb(32)
+    nbits_dl           = rb(16)   # delta page length bits
+    min_co_offset      = rb(32)   # content offset (Acrobat always 0)
+    nbits_dco          = rb(16)
+    min_co_length      = rb(32)   # content length (Acrobat always 0)
+    nbits_dcl          = rb(16)
+    nbits_ns           = rb(16)   # nshared objects bits
+    nbits_sid          = rb(16)   # shared identifier bits
+    nbits_snum         = rb(16)   # shared numerator bits
+    shared_denom       = rb(16)
+
+    # ── Per-page entries (7 "rows", each padded to byte boundary after all pages)
+    entries: list[dict[str, Any]] = [{} for _ in range(n_pages)]
+
+    def load_row(field: str, nbits: int) -> None:
+        for i in range(n_pages):
+            entries[i][field] = rb(nbits) if nbits else 0
+        skip_byte()
+
+    load_row("dn",  nbits_dn)
+    load_row("dl",  nbits_dl)
+    load_row("ns",  nbits_ns)
+
+    # shared identifiers (variable per page)
+    for i in range(n_pages):
+        entries[i]["si"] = [rb(nbits_sid) for _ in range(entries[i]["ns"])] if nbits_sid else []
+    skip_byte()
+
+    # shared numerators (variable per page)
+    for i in range(n_pages):
+        entries[i]["sn"] = [rb(nbits_snum) for _ in range(entries[i]["ns"])] if nbits_snum else []
+    skip_byte()
+
+    load_row("dco", nbits_dco)
+    load_row("dcl", nbits_dcl)
+
+    page_header = {
+        "min_nobjects":       min_nobjects,
+        "first_page_offset":  first_page_offset,
+        "nbits_delta_nobjects": nbits_dn,
+        "min_page_length":    min_page_length,
+        "nbits_delta_page_length": nbits_dl,
+        "nbits_nshared":      nbits_ns,
+        "nbits_shared_id":    nbits_sid,
+        "nbits_shared_num":   nbits_snum,
+        "shared_denom":       shared_denom,
+    }
+    pages = [
+        {
+            "nobjects":      min_nobjects + e["dn"],
+            "page_length":   min_page_length + e["dl"],
+            "nshared":       e["ns"],
+            "shared_ids":    e["si"],
+        }
+        for e in entries
+    ]
+
+    # ── Shared Objects Hints Table ────────────────────────────────────────────
+    spos = shared_offset * 8  # bit offset of shared table
+
+    def srb(n: int) -> int:
+        nonlocal spos
+        v = int(bits[spos : spos + n], 2) if n else 0
+        spos += n
+        return v
+
+    def sskip_byte() -> None:
+        nonlocal spos
+        rem = spos % 8
+        if rem:
+            spos += 8 - rem
+
+    first_shared_obj      = srb(32)
+    first_shared_offset   = srb(32)
+    nshared_first_page    = srb(32)
+    nshared_total         = srb(32)
+    nbits_nobjects        = srb(16)
+    min_group_length      = srb(32)
+    nbits_delta_gl        = srb(16)
+
+    shared_header = {
+        "first_shared_obj":    first_shared_obj,
+        "first_shared_offset": first_shared_offset,
+        "nshared_first_page":  nshared_first_page,
+        "nshared_total":       nshared_total,
+        "nbits_nobjects":      nbits_nobjects,
+        "min_group_length":    min_group_length,
+        "nbits_delta_group_length": nbits_delta_gl,
+    }
+
+    # Per-group entries
+    n_groups = nshared_total
+    delta_gl: list[int] = []
+    for _ in range(n_groups):
+        delta_gl.append(srb(nbits_delta_gl) if nbits_delta_gl else 0)
+    sskip_byte()
+
+    sig_present: list[int] = []
+    for _ in range(n_groups):
+        sig_present.append(srb(1))
+    sskip_byte()
+
+    for sp in sig_present:
+        if sp:  # skip 128-bit MD5 hash
+            srb(128)
+
+    nobjs_m1: list[int] = []
+    for _ in range(n_groups):
+        nobjs_m1.append(srb(nbits_nobjects) if nbits_nobjects else 0)
+    sskip_byte()
+
+    shared_groups = [
+        {
+            "group_length": min_group_length + delta_gl[i],
+            "nobjects":     nobjs_m1[i] + 1,
+        }
+        for i in range(n_groups)
+    ]
+
+    return {
+        "page_header":    page_header,
+        "pages":          pages,
+        "shared_header":  shared_header,
+        "shared_groups":  shared_groups,
+    }
+
+
+@app.get("/api/hint_stream/{upload_id}/{num}/{gen}")
+def get_hint_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Parse a linearization hint stream and return structured metadata."""
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+    obj = doc.resolve_num(num, gen)
+    if obj is None or obj.type != PdfObjType.Stream:
+        raise HTTPException(404, "Object not found or not a stream")
+
+    raw = _decode_stream(obj)
+    if raw is None:
+        raise HTTPException(422, "Cannot decode stream")
+
+    decoded_size = len(raw)
+    raw_size = len(obj.stream_raw)
+
+    # /S gives the byte offset of the shared objects hint table in the decoded stream
+    s_obj = obj.get("S")
+    shared_offset: int | None = s_obj.ival if s_obj.is_int() else None
+    page_hints_size = shared_offset if shared_offset is not None else decoded_size
+    shared_hints_size = decoded_size - shared_offset if shared_offset is not None else 0
+
+    # Find the linearization parameter dictionary (contains /Linearized key)
+    from pdf.xref import XrefEntryType as _XET2
+    lin_params: dict[str, Any] = {}
+    n_pages: int = 0
+    for lnum, lxe in doc._xref.entries.items():
+        if lxe.etype not in (_XET2.InUse, _XET2.Compressed):
+            continue
+        lobj = doc.resolve_num(lnum, lxe.gen)
+        if lobj and lobj.is_dict() and lobj.get("Linearized").is_int():
+            h_obj = lobj.get("H")
+            n_val = lobj.get("N")
+            n_pages = n_val.ival if n_val.is_int() else 0
+            lin_params = {
+                "obj_num": lnum,
+                "file_length": lobj.get("L").ival if lobj.get("L").is_int() else None,
+                "first_page_obj": lobj.get("O").ival if lobj.get("O").is_int() else None,
+                "num_pages": n_pages,
+                "end_of_first_page": lobj.get("E").ival if lobj.get("E").is_int() else None,
+                "main_xref_offset": lobj.get("T").ival if lobj.get("T").is_int() else None,
+                "hint_offset": h_obj.arr[0].ival if h_obj.is_array() and len(h_obj.arr) >= 1 and h_obj.arr[0].is_int() else None,
+                "hint_length": h_obj.arr[1].ival if h_obj.is_array() and len(h_obj.arr) >= 2 and h_obj.arr[1].is_int() else None,
+            }
+            break
+
+    # Parse the binary hint tables when we have both page count and shared offset
+    hint_tables: dict[str, Any] = {}
+    if n_pages > 0 and shared_offset is not None:
+        try:
+            hint_tables = _parse_hint_stream(raw, n_pages, shared_offset)
+        except Exception:
+            pass  # best-effort; leave hint_tables empty on parse failure
+
+    return {
+        "raw_size": raw_size,
+        "decoded_size": decoded_size,
+        "shared_offset": shared_offset,
+        "page_hints_size": page_hints_size,
+        "shared_hints_size": shared_hints_size,
+        "lin_params": lin_params,
+        **hint_tables,
     }
 
 

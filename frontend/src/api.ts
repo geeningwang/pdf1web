@@ -33,6 +33,7 @@ export interface ObjectDetailResponse {
   is_ttf: boolean
   is_cid_to_gid_map: boolean
   is_cid_set: boolean
+  is_hint_stream: boolean
   image_filter: string | null
   obj_num: number
   gen_num: number
@@ -593,6 +594,78 @@ export interface XRefData {
 
 export async function fetchXRef(uploadId: string): Promise<XRefData | null> {
   const res = await fetch(`${BASE}/xref/${uploadId}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+/* -----------------------------------------------------------------------
+   Linearization Hint Stream API
+   ----------------------------------------------------------------------- */
+
+export interface HintStreamLinParams {
+  obj_num: number
+  file_length: number | null
+  first_page_obj: number | null
+  num_pages: number | null
+  end_of_first_page: number | null
+  main_xref_offset: number | null
+  hint_offset: number | null
+  hint_length: number | null
+}
+
+export interface PageHintHeader {
+  min_nobjects: number
+  first_page_offset: number
+  nbits_delta_nobjects: number
+  min_page_length: number
+  nbits_delta_page_length: number
+  nbits_nshared: number
+  nbits_shared_id: number
+  nbits_shared_num: number
+  shared_denom: number
+}
+
+export interface PageHintEntry {
+  nobjects: number
+  page_length: number
+  nshared: number
+  shared_ids: number[]
+}
+
+export interface SharedHintHeader {
+  first_shared_obj: number
+  first_shared_offset: number
+  nshared_first_page: number
+  nshared_total: number
+  nbits_nobjects: number
+  min_group_length: number
+  nbits_delta_group_length: number
+}
+
+export interface SharedGroupEntry {
+  group_length: number
+  nobjects: number
+}
+
+export interface HintStreamData {
+  raw_size: number
+  decoded_size: number
+  shared_offset: number | null
+  page_hints_size: number
+  shared_hints_size: number
+  lin_params: HintStreamLinParams
+  page_header?: PageHintHeader
+  pages?: PageHintEntry[]
+  shared_header?: SharedHintHeader
+  shared_groups?: SharedGroupEntry[]
+}
+
+export async function fetchHintStream(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<HintStreamData | null> {
+  const res = await fetch(`${BASE}/hint_stream/${uploadId}/${num}/${gen}`)
   if (!res.ok) return null
   return res.json()
 }

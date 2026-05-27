@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData, ToUnicodeData, FontDescriptorData, TtfTablesData, BackRefsData, CidToGidData, CidSetData, FontPaneData, XRefData } from '../api'
-import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, fetchCidToGid, fetchCidSet, fetchFontPane, fetchXRef, imageUrl } from '../api'
+import type { TreeNode, IccData, ImageDetailData, ContentStreamData, PaletteData, ToUnicodeData, FontDescriptorData, TtfTablesData, BackRefsData, CidToGidData, CidSetData, FontPaneData, XRefData, HintStreamData } from '../api'
+import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStream, fetchPaletteData, fetchToUnicode, fetchFontDescriptor, fetchTtfTables, fetchBackRefs, fetchCidToGid, fetchCidSet, fetchFontPane, fetchXRef, fetchHintStream, imageUrl } from '../api'
 import IccPane from './IccPane'
 import ImagePane from './ImagePane'
 import ContentStreamPane from './ContentStreamPane'
@@ -13,6 +13,7 @@ import CidToGidPane from './CidToGidPane'
 import CidSetPane from './CidSetPane'
 import SimpleFontPane from './SimpleFontPane'
 import XRefPane from './XRefPane'
+import HintStreamPane from './HintStreamPane'
 
 interface Props {
   node: TreeNode | null
@@ -67,6 +68,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
   const [cidSetData, setCidSetData] = useState<CidSetData | null>(null)
   const [fontData, setFontData] = useState<FontPaneData | null>(null)
   const [xrefData, setXrefData] = useState<XRefData | null>(null)
+  const [hintStreamData, setHintStreamData] = useState<HintStreamData | null>(null)
   const [backRefs, setBackRefs] = useState<BackRefsData | null>(null)
   const [typeLabel, setTypeLabel] = useState<string | null>(null)
 
@@ -94,6 +96,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
     setCidSetData(null)
     setFontData(null)
     setXrefData(null)
+    setHintStreamData(null)
     setBackRefs(null)
     setTypeLabel(null)
     setError(null)
@@ -166,6 +169,10 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
         if (resp.is_font) {
           fetchFontPane(uploadId, node.obj_num, node.gen_num)
             .then(d => setFontData(d))
+        }
+        if (resp.is_hint_stream) {
+          fetchHintStream(uploadId, node.obj_num, node.gen_num)
+            .then(d => setHintStreamData(d))
         }
         // Always fetch back-references for any real object
         fetchBackRefs(uploadId, node.obj_num)
@@ -335,6 +342,12 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
             {!canShowImage && fontData && (
               <div className="detail-font-section">
                 <SimpleFontPane data={fontData} onJumpToObj={(num, _gen) => onJumpToObj(num)} />
+              </div>
+            )}
+
+            {hintStreamData && (
+              <div className="detail-hs-section">
+                <HintStreamPane data={hintStreamData} />
               </div>
             )}
 
