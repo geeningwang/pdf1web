@@ -293,6 +293,7 @@ export interface ContentStreamData {
     }>
   }
   media_box?: [number, number, number, number] | null
+  crop_box?: [number, number, number, number] | null
 }
 
 export async function fetchContentStream(

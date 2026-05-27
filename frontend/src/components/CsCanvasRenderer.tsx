@@ -787,7 +787,10 @@ const CsCanvasRenderer = forwardRef<CsCanvasHandle, Props>(({ data, uploadId, ma
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const [x0, y0, x1, y1] = mb
+    // Use CropBox if present — it defines the visible region viewers display.
+    // Its [x0,y0,x1,y1] may be a sub-rect of MediaBox (e.g. landscape crop of portrait page).
+    const cb = data.crop_box
+    const [x0, y0, x1, y1] = (cb && cb.length >= 4) ? cb : mb
     const pdfW = x1 - x0
     const pdfH = y1 - y0
     if (pdfW <= 0 || pdfH <= 0) {

@@ -254,6 +254,26 @@ def _classify_object(
                 return "CID Set"
             if kp == "Info" and tn == "Trailer":
                 return "Document Info"
+            if kp == "DecodeParms":
+                return "Decode Parameters"
+            if kp == "Resources":
+                return "Resource Dictionary"
+            # Resource sub-dictionaries (Font, XObject, ColorSpace, etc.) are
+            # indirect objects whose parent is a Resource Dictionary (no /Type
+            # key → type_name "Dictionary"). Confirm by checking that the parent
+            # itself has a "Resources" backref.
+            _RES_SUBDICT: dict[str, str] = {
+                "Font": "Font Resource Map",
+                "XObject": "XObject Resource Map",
+                "ColorSpace": "Color Space Map",
+                "Pattern": "Pattern Resource Map",
+                "Shading": "Shading Resource Map",
+                "Properties": "Properties Map",
+            }
+            if kp in _RES_SUBDICT and tn == "Dictionary":
+                parent_refs = backref_index.get(from_num, [])
+                if any(pr.get("key_path") == "Resources" for pr in parent_refs):
+                    return _RES_SUBDICT[kp]
             if "ExtGState" in kp:
                 return "Graphics State"
             if kp == "Thumb":
@@ -1111,12 +1131,19 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
             if page_obj is not None:
                 break
 
-    if page_obj is not None and media_box is None:
-        mb = page_obj.get('MediaBox')
-        if mb.is_array() and len(mb.arr) >= 4:
-            nums_m = [_num_val(v) for v in mb.arr[:4]]
-            if all(nm is not None for nm in nums_m):
-                media_box = nums_m  # type: ignore[assignment]
+    crop_box: list[float] | None = None
+    if page_obj is not None:
+        if media_box is None:
+            mb = page_obj.get('MediaBox')
+            if mb.is_array() and len(mb.arr) >= 4:
+                nums_m = [_num_val(v) for v in mb.arr[:4]]
+                if all(nm is not None for nm in nums_m):
+                    media_box = nums_m  # type: ignore[assignment]
+        cb = page_obj.get('CropBox')
+        if cb.is_array() and len(cb.arr) >= 4:
+            nums_c = [_num_val(v) for v in cb.arr[:4]]
+            if all(nc is not None for nc in nums_c):
+                crop_box = nums_c  # type: ignore[assignment]
 
     # Collect resources from page (lower priority) then stream (higher priority)
     for res_obj in [_resolve_res_dict(page_obj.get('Resources')) if page_obj else None,
@@ -1231,6 +1258,7 @@ def get_content_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
 
     result['resources'] = resources
     result['media_box'] = media_box
+    result['crop_box'] = crop_box
     return result
 
 
