@@ -181,6 +181,7 @@ export default function HintStreamPane({ data }: Props) {
                   <th className="hs-th hs-th-num">Section offset</th>
                   <th className="hs-th hs-th-num">Objects</th>
                   <th className="hs-th hs-th-num">Section length</th>
+                  <th className="hs-th hs-th-num" title="Deduced from xref offsets: InUse objects whose file offset falls in this page's section range, minus shared group objects">Deduced objects</th>
                   <th className="hs-th hs-th-num" title="Acrobat always writes 0 (impl. note 126): not meaningful">Content offset</th>
                   <th className="hs-th hs-th-num" title="Acrobat: equals page_length − min_page_length, not the stream /Length (impl. note 127). Acrobat ignores this when reading.">Content length</th>
                   <th className="hs-th hs-th-num">Shared group IDs</th>
@@ -198,11 +199,27 @@ export default function HintStreamPane({ data }: Props) {
                       onClick={clickable ? () => handlePageRowClick(p.shared_ids) : undefined}
                     >
                       <td className="hs-td-num">{i}</td>
-                      <td className="hs-td-num" style={{ fontFamily: 'monospace' }}>{p.section_offset != null ? fmtOffset(p.section_offset) : '—'}</td>
+                      <td className="hs-td-num">{p.section_offset != null ? `@${p.section_offset}` : '—'}</td>
                       <td className="hs-td-num">{p.nobjects}</td>
                       <td className="hs-td-num">{fmtBytes(p.page_length)}</td>
-                      <td className="hs-td-num">{p.content_offset === 0 ? '—' : fmtBytes(p.content_offset)}</td>
-                      <td className="hs-td-num">{fmtBytes(p.content_length)}</td>
+                      <td className="hs-td-num">
+                        {(() => {
+                          const objs = p.deduced_objects ?? []
+                          const count = objs.length
+                          const mismatch = count !== p.nobjects
+                          return <>
+                            <span
+                              style={{ fontWeight: 'bold', color: mismatch ? '#c0392b' : '#27ae60', marginRight: 4 }}
+                              title={mismatch ? `Count mismatch: deduced ${count} but hint table says ${p.nobjects}` : `Count matches hint table (${p.nobjects})`}
+                            >
+                              [{count}/{p.nobjects}]
+                            </span>
+                            {count > 0 ? objs.join(', ') : '\u2014'}
+                          </>
+                        })()}
+                      </td>
+                      <td className="hs-td-num"><span style={{ textDecoration: 'line-through' }}>{p.content_offset}</span></td>
+                      <td className="hs-td-num"><span style={{ textDecoration: 'line-through' }}>{p.content_length}</span></td>
                       <td className="hs-td-num" style={{ fontFamily: 'monospace' }}>
                         {p.nshared === 0
                           ? '\u2014'

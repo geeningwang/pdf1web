@@ -634,6 +634,60 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     }
 
 
+def _collect_page_dict_offsets(doc: Any) -> list[int]:
+    """Return the file offset of each page's Page-dict xref entry, in page order.
+
+    Traverses Catalog → /Pages → /Kids recursively.  Compressed entries are
+    resolved to their parent object stream's file offset so the value is always
+    an absolute file position.  Returns [] on any failure.
+    """
+    def _eff_offset(num: int) -> int:
+        xe = doc._xref.get_entry(num)
+        if xe is None:
+            return 0
+        if xe.etype == XrefEntryType.InUse:
+            return xe.offset
+        if xe.etype == XrefEntryType.Compressed:
+            xe2 = doc._xref.get_entry(xe.offset)
+            return xe2.offset if xe2 and xe2.etype == XrefEntryType.InUse else 0
+        return 0
+
+    def _walk(obj_num: int, out: list[int]) -> None:
+        obj = doc.resolve_num(obj_num)
+        if obj is None or not obj.is_dict():
+            return
+        t = obj.get("Type")
+        if not t.is_name():
+            return
+        if t.sval == "Page":
+            out.append(_eff_offset(obj_num))
+        elif t.sval == "Pages":
+            kids = obj.get("Kids")
+            if kids.is_array():
+                for kid in kids.arr:
+                    if kid.is_ref():
+                        _walk(kid.ref.num, out)
+
+    try:
+        trailer = doc._trailer
+        if not trailer.is_dict():
+            return []
+        root_ref = trailer.get("Root")
+        if not root_ref.is_ref():
+            return []
+        catalog = doc.resolve_num(root_ref.ref.num)
+        if catalog is None or not catalog.is_dict():
+            return []
+        pages_ref = catalog.get("Pages")
+        if not pages_ref.is_ref():
+            return []
+        result: list[int] = []
+        _walk(pages_ref.ref.num, result)
+        return result
+    except Exception:
+        return []
+
+
 def _parse_hint_stream(raw: bytes, n_pages: int, shared_offset: int, first_page_obj: int = 0) -> dict[str, Any]:
     """Parse the binary linearization hint tables from the decoded stream bytes.
 
@@ -782,11 +836,15 @@ def _parse_hint_stream(raw: bytes, n_pages: int, shared_offset: int, first_page_
         nobjs_m1.append(srb(nbits_nobjects) if nbits_nobjects else 0)
     sskip_byte()
 
-    # Compute first PDF object number for each group (per qpdf checkHSharedObject):
-    #   groups 0..nshared_first_page-1  → start from first_page_obj (lin dict /O)
-    #   groups nshared_first_page..end  → start from first_shared_obj (shared header)
+    # Compute first PDF object number for each group.
+    # First-page shared objects come AFTER page 0's private objects in the
+    # numbering scheme: they start at first_page_obj + nobjects[0].
+    # (qpdf assigns: page dict = O, page 0 privates = O+1..O+n-1,
+    #  first-page shared = O+n onward)
+    # Non-first-page shared objects start from first_shared_obj (shared header).
+    fp_nobjects = pages[0]["nobjects"] if pages else 0
     shared_groups = []
-    obj_cursor = first_page_obj
+    obj_cursor = first_page_obj + fp_nobjects
     for i in range(n_groups):
         if i == nshared_first_page:
             obj_cursor = first_shared_obj
@@ -882,10 +940,59 @@ def get_hint_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         hint_pages = hint_tables["pages"]
         if hint_pages:
             hint_pages[0]["section_offset"] = actual_fp_offset
-            cum = eof1p
-            for i in range(1, len(hint_pages)):
-                hint_pages[i]["section_offset"] = cum
-                cum += hint_pages[i]["page_length"]
+
+            # For pages 1..N-1 use the xref offset of each page's Page dictionary
+            # rather than cumulative page_lengths.  The hint table page_lengths
+            # include separator whitespace, causing cumulative drift (e.g. 152 B
+            # over 45 pages in NESDoc.pdf) that misattributes objects near page
+            # boundaries.  The Page dict is always the first object in a page
+            # section in a properly linearized PDF.
+            page_dict_offsets = _collect_page_dict_offsets(doc)
+            if len(page_dict_offsets) == len(hint_pages):
+                for i in range(1, len(hint_pages)):
+                    hint_pages[i]["section_offset"] = page_dict_offsets[i]
+            else:
+                # Fallback: cumulative page_lengths (less accurate)
+                cum = eof1p
+                for i in range(1, len(hint_pages)):
+                    hint_pages[i]["section_offset"] = cum
+                    cum += hint_pages[i]["page_length"]
+
+            # Deduce private object IDs per page from the xref table.
+            # Strategy: assign each object an "effective" file offset —
+            #   InUse objects use their own offset directly;
+            #   Compressed objects (stored inside object streams) use the
+            #   file offset of their parent object stream so they land in
+            #   the right section.
+            # Shared objects, document-tail objects, etc. need no explicit
+            # exclusion: page_length already bounds each page's private region
+            # exactly — shared objects physically reside in different byte
+            # ranges (between or after page sections).
+
+            # Map object-stream obj_num → file offset (for resolving Compressed entries)
+            stm_offsets: dict[int, int] = {
+                num: xe.offset
+                for num, xe in doc._xref.entries.items()
+                if xe.etype == XrefEntryType.InUse
+            }
+
+            all_obj_offsets: list[tuple[int, int]] = []  # (effective_offset, obj_num)
+            for num, xe in doc._xref.entries.items():
+                if xe.etype == XrefEntryType.InUse:
+                    all_obj_offsets.append((xe.offset, num))
+                elif xe.etype == XrefEntryType.Compressed:
+                    parent_off = stm_offsets.get(xe.offset)
+                    if parent_off is not None:
+                        all_obj_offsets.append((parent_off, num))
+            all_obj_offsets.sort()
+
+            for p in hint_pages:
+                sec_start = p["section_offset"]
+                sec_end = sec_start + p["page_length"]
+                p["deduced_objects"] = sorted(
+                    num for off, num in all_obj_offsets
+                    if sec_start <= off < sec_end
+                )
 
     # Annotate each shared group with a semantic type label for its lead object
     if hint_tables.get("shared_groups"):

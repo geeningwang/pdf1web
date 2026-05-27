@@ -637,6 +637,7 @@ export interface PageHintEntry {
   nshared: number
   shared_ids: number[]
   section_offset?: number
+  deduced_objects?: number[]
 }
 
 export interface SharedHintHeader {
