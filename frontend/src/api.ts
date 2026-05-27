@@ -619,6 +619,10 @@ export interface PageHintHeader {
   nbits_delta_nobjects: number
   min_page_length: number
   nbits_delta_page_length: number
+  min_co_offset: number
+  nbits_delta_co_offset: number
+  min_co_length: number
+  nbits_delta_co_length: number
   nbits_nshared: number
   nbits_shared_id: number
   nbits_shared_num: number
@@ -628,8 +632,11 @@ export interface PageHintHeader {
 export interface PageHintEntry {
   nobjects: number
   page_length: number
+  content_offset: number
+  content_length: number
   nshared: number
   shared_ids: number[]
+  section_offset?: number
 }
 
 export interface SharedHintHeader {
@@ -645,6 +652,9 @@ export interface SharedHintHeader {
 export interface SharedGroupEntry {
   group_length: number
   nobjects: number
+  first_obj: number
+  section: 'first_page' | 'rest'
+  obj_type?: string
 }
 
 export interface HintStreamData {

@@ -634,7 +634,7 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     }
 
 
-def _parse_hint_stream(raw: bytes, n_pages: int, shared_offset: int) -> dict[str, Any]:
+def _parse_hint_stream(raw: bytes, n_pages: int, shared_offset: int, first_page_obj: int = 0) -> dict[str, Any]:
     """Parse the binary linearization hint tables from the decoded stream bytes.
 
     Field sizes follow the qpdf reference implementation (QPDF_linearization.cc):
@@ -642,6 +642,9 @@ def _parse_hint_stream(raw: bytes, n_pages: int, shared_offset: int) -> dict[str
     - Each nbits_* field in the header is 16 bits (NOT 4).
     - Per-page rows are each padded to the next byte boundary after all pages.
     - Shared hints header: 32+32+32+32+16+32+16 = 192 bits (24 bytes)
+    - first_page_obj: PDF object number of the first page (lin dict /O); groups
+      0..nshared_first_page-1 start here, groups nshared_first_page..total-1
+      start from first_shared_obj (per qpdf QPDF_linearization.cc checkHSharedObject).
     """
     bits = "".join(f"{b:08b}" for b in raw)
     pos = 0
@@ -699,22 +702,28 @@ def _parse_hint_stream(raw: bytes, n_pages: int, shared_offset: int) -> dict[str
     load_row("dcl", nbits_dcl)
 
     page_header = {
-        "min_nobjects":       min_nobjects,
-        "first_page_offset":  first_page_offset,
-        "nbits_delta_nobjects": nbits_dn,
-        "min_page_length":    min_page_length,
-        "nbits_delta_page_length": nbits_dl,
-        "nbits_nshared":      nbits_ns,
-        "nbits_shared_id":    nbits_sid,
-        "nbits_shared_num":   nbits_snum,
-        "shared_denom":       shared_denom,
+        "min_nobjects":             min_nobjects,
+        "first_page_offset":        first_page_offset,
+        "nbits_delta_nobjects":     nbits_dn,
+        "min_page_length":          min_page_length,
+        "nbits_delta_page_length":  nbits_dl,
+        "min_co_offset":            min_co_offset,
+        "nbits_delta_co_offset":    nbits_dco,
+        "min_co_length":            min_co_length,
+        "nbits_delta_co_length":    nbits_dcl,
+        "nbits_nshared":            nbits_ns,
+        "nbits_shared_id":          nbits_sid,
+        "nbits_shared_num":         nbits_snum,
+        "shared_denom":             shared_denom,
     }
     pages = [
         {
-            "nobjects":      min_nobjects + e["dn"],
-            "page_length":   min_page_length + e["dl"],
-            "nshared":       e["ns"],
-            "shared_ids":    e["si"],
+            "nobjects":        min_nobjects + e["dn"],
+            "page_length":     min_page_length + e["dl"],
+            "content_offset":  min_co_offset + e["dco"],
+            "content_length":  min_co_length + e["dcl"],
+            "nshared":         e["ns"],
+            "shared_ids":      e["si"],
         }
         for e in entries
     ]
@@ -773,13 +782,22 @@ def _parse_hint_stream(raw: bytes, n_pages: int, shared_offset: int) -> dict[str
         nobjs_m1.append(srb(nbits_nobjects) if nbits_nobjects else 0)
     sskip_byte()
 
-    shared_groups = [
-        {
+    # Compute first PDF object number for each group (per qpdf checkHSharedObject):
+    #   groups 0..nshared_first_page-1  → start from first_page_obj (lin dict /O)
+    #   groups nshared_first_page..end  → start from first_shared_obj (shared header)
+    shared_groups = []
+    obj_cursor = first_page_obj
+    for i in range(n_groups):
+        if i == nshared_first_page:
+            obj_cursor = first_shared_obj
+        nobjs = nobjs_m1[i] + 1
+        shared_groups.append({
             "group_length": min_group_length + delta_gl[i],
-            "nobjects":     nobjs_m1[i] + 1,
-        }
-        for i in range(n_groups)
-    ]
+            "nobjects":     nobjs,
+            "first_obj":    obj_cursor,
+            "section":      "first_page" if i < nshared_first_page else "rest",
+        })
+        obj_cursor += nobjs
 
     return {
         "page_header":    page_header,
@@ -840,9 +858,31 @@ def get_hint_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     hint_tables: dict[str, Any] = {}
     if n_pages > 0 and shared_offset is not None:
         try:
-            hint_tables = _parse_hint_stream(raw, n_pages, shared_offset)
+            first_page_obj = lin_params.get("first_page_obj") or 0
+            hint_tables = _parse_hint_stream(raw, n_pages, shared_offset, first_page_obj)
         except Exception:
             pass  # best-effort; leave hint_tables empty on parse failure
+
+    # Compute section_offset per page:
+    #   page 0 → first_page_offset from the hint header (absolute file position)
+    #   pages 1..N-1 → laid out sequentially starting from lin dict /E (end_of_first_page)
+    if hint_tables.get("pages") and hint_tables.get("page_header"):
+        fp_offset = hint_tables["page_header"]["first_page_offset"]
+        eof1p = lin_params.get("end_of_first_page") or 0
+        hint_pages = hint_tables["pages"]
+        if hint_pages:
+            hint_pages[0]["section_offset"] = fp_offset
+            cum = eof1p
+            for i in range(1, len(hint_pages)):
+                hint_pages[i]["section_offset"] = cum
+                cum += hint_pages[i]["page_length"]
+
+    # Annotate each shared group with a semantic type label for its lead object
+    if hint_tables.get("shared_groups"):
+        backref_index = _backref_cache.get(upload_id, {})
+        for group in hint_tables["shared_groups"]:
+            obj_num = group.get("first_obj", 0)
+            group["obj_type"] = _classify_object(obj_num, 0, doc, backref_index) if obj_num else "?"
 
     return {
         "raw_size": raw_size,

@@ -1,3 +1,4 @@
+import { useState, useRef, useMemo } from 'react'
 import type { HintStreamData } from '../api'
 
 function fmtBytes(n: number): string {
@@ -68,6 +69,25 @@ interface Props {
 
 export default function HintStreamPane({ data }: Props) {
   const lp = data.lin_params
+  const [groupFilter, setGroupFilter] = useState<string>('')
+  const sharedSectionRef = useRef<HTMLDivElement>(null)
+  const filterInputRef = useRef<HTMLInputElement>(null)
+
+  const filteredIds = useMemo<Set<number> | null>(() => {
+    const t = groupFilter.trim()
+    if (!t) return null
+    const ids = t.split(/[\s,]+/).map(Number).filter(n => Number.isInteger(n) && n >= 0)
+    return ids.length > 0 ? new Set(ids) : null
+  }, [groupFilter])
+
+  const handlePageRowClick = (sharedIds: number[]) => {
+    if (sharedIds.length === 0) return
+    setGroupFilter(sharedIds.join(', '))
+    setTimeout(() => {
+      sharedSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      filterInputRef.current?.focus()
+    }, 0)
+  }
 
   return (
     <div className="hs-pane">
@@ -137,6 +157,10 @@ export default function HintStreamPane({ data }: Props) {
               <tr><td className="hs-key">Min page length</td><td className="hs-val">{fmtBytes(data.page_header.min_page_length)}</td></tr>
               <tr><td className="hs-key">Bits for Δ page length</td><td className="hs-val">{data.page_header.nbits_delta_page_length}</td></tr>
               <tr><td className="hs-key">Bits for Δ obj count</td><td className="hs-val">{data.page_header.nbits_delta_nobjects}</td></tr>
+              <tr><td className="hs-key">Min content stream offset</td><td className="hs-val">{fmtBytes(data.page_header.min_co_offset)}</td></tr>
+              <tr><td className="hs-key">Bits for Δ content offset</td><td className="hs-val">{data.page_header.nbits_delta_co_offset}</td></tr>
+              <tr><td className="hs-key">Min content stream length</td><td className="hs-val">{fmtBytes(data.page_header.min_co_length)}</td></tr>
+              <tr><td className="hs-key">Bits for Δ content length</td><td className="hs-val">{data.page_header.nbits_delta_co_length}</td></tr>
               <tr><td className="hs-key">Bits for shared ref count</td><td className="hs-val">{data.page_header.nbits_nshared}</td></tr>
               <tr><td className="hs-key">Bits for shared identifier</td><td className="hs-val">{data.page_header.nbits_shared_id}</td></tr>
               <tr><td className="hs-key">Fraction (num bits / denom)</td><td className="hs-val">{data.page_header.nbits_shared_num} bits / {data.page_header.shared_denom}</td></tr>
@@ -154,20 +178,44 @@ export default function HintStreamPane({ data }: Props) {
               <thead>
                 <tr>
                   <th className="hs-th hs-th-num">Page</th>
+                  <th className="hs-th hs-th-num">Section offset</th>
                   <th className="hs-th hs-th-num">Objects</th>
                   <th className="hs-th hs-th-num">Section length</th>
-                  <th className="hs-th hs-th-num">Shared refs</th>
+                  <th className="hs-th hs-th-num">Content offset</th>
+                  <th className="hs-th hs-th-num">Content length</th>
+                  <th className="hs-th hs-th-num">Shared group IDs</th>
                 </tr>
               </thead>
               <tbody>
-                {data.pages.map((p, i) => (
-                  <tr key={i} className={i % 2 === 0 ? 'hs-row-even' : 'hs-row-odd'}>
-                    <td className="hs-td-num">{i}</td>
-                    <td className="hs-td-num">{p.nobjects}</td>
-                    <td className="hs-td-num">{fmtBytes(p.page_length)}</td>
-                    <td className="hs-td-num">{p.nshared}</td>
-                  </tr>
-                ))}
+                {data.pages.map((p, i) => {
+                  const clickable = i !== 0 && p.nshared > 0
+                  return (
+                    <tr
+                      key={i}
+                      className={i % 2 === 0 ? 'hs-row-even' : 'hs-row-odd'}
+                      style={clickable ? { cursor: 'pointer' } : undefined}
+                      title={clickable ? 'Click to filter Shared groups table by these IDs' : undefined}
+                      onClick={clickable ? () => handlePageRowClick(p.shared_ids) : undefined}
+                    >
+                      <td className="hs-td-num">{i}</td>
+                      <td className="hs-td-num" style={{ fontFamily: 'monospace' }}>{p.section_offset != null ? fmtOffset(p.section_offset) : '—'}</td>
+                      <td className="hs-td-num">{p.nobjects}</td>
+                      <td className="hs-td-num">{fmtBytes(p.page_length)}</td>
+                      <td className="hs-td-num">{fmtBytes(p.content_offset)}</td>
+                      <td className="hs-td-num">{fmtBytes(p.content_length)}</td>
+                      <td className="hs-td-num" style={{ fontFamily: 'monospace' }}>
+                        {p.nshared === 0
+                          ? '\u2014'
+                          : i === 0
+                            ? <span title="PDF spec requires page 0 to have no shared refs; pdlin/Acrobat fill garbage here">
+                                {p.shared_ids.join(', ')} <span className="hs-badge-warn">spec violation</span>
+                              </span>
+                            : <span>{p.shared_ids.join(', ')} <span className="hs-page-click-hint">{'→ filter'}</span></span>
+                        }
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -186,6 +234,7 @@ export default function HintStreamPane({ data }: Props) {
               <tr><td className="hs-key">First shared obj file offset</td><td className="hs-val">{fmtOffset(data.shared_header.first_shared_offset)}</td></tr>
               <tr><td className="hs-key">Min group length</td><td className="hs-val">{fmtBytes(data.shared_header.min_group_length)}</td></tr>
               <tr><td className="hs-key">Bits for Δ group length</td><td className="hs-val">{data.shared_header.nbits_delta_group_length}</td></tr>
+              <tr><td className="hs-key">Bits for obj count per group</td><td className="hs-val">{data.shared_header.nbits_nobjects}</td></tr>
             </tbody>
           </table>
         </div>
@@ -193,25 +242,59 @@ export default function HintStreamPane({ data }: Props) {
 
       {/* Shared groups */}
       {data.shared_groups && data.shared_groups.length > 0 && (
-        <div className="hs-section">
-          <div className="hs-section-label">Shared object groups ({data.shared_groups.length} groups)</div>
+        <div className="hs-section" ref={sharedSectionRef}>
+          <div className="hs-section-label">
+            Shared object groups ({data.shared_groups.length} groups)
+          </div>
+          {/* Filter input */}
+          <div className="hs-filter-row">
+            <input
+              ref={filterInputRef}
+              className="hs-filter-input"
+              placeholder="Filter by group IDs, e.g. 0, 5, 12"
+              value={groupFilter}
+              onChange={e => setGroupFilter(e.target.value)}
+            />
+            {groupFilter && (
+              <button className="hs-filter-clear" onClick={() => setGroupFilter('')}>{'×'}</button>
+            )}
+            {filteredIds && (
+              <span className="hs-filter-count">
+                {data.shared_groups.filter((_, i) => filteredIds.has(i)).length} / {data.shared_groups.length} shown
+              </span>
+            )}
+          </div>
           <div className="hs-scroll-table-wrap">
             <table className="hs-table hs-page-table">
               <thead>
                 <tr>
                   <th className="hs-th hs-th-num">Group #</th>
+                  <th className="hs-th hs-th-num">PDF object</th>
+                  <th className="hs-th">Type</th>
                   <th className="hs-th hs-th-num">Objects</th>
-                  <th className="hs-th hs-th-num">Group length</th>
+                  <th className="hs-th hs-th-num">Length</th>
+                  <th className="hs-th hs-th-num">Section</th>
                 </tr>
               </thead>
               <tbody>
-                {data.shared_groups.map((g, i) => (
-                  <tr key={i} className={i % 2 === 0 ? 'hs-row-even' : 'hs-row-odd'}>
-                    <td className="hs-td-num">{i}</td>
-                    <td className="hs-td-num">{g.nobjects}</td>
-                    <td className="hs-td-num">{fmtBytes(g.group_length)}</td>
-                  </tr>
-                ))}
+                {data.shared_groups
+                  .map((g, i) => ({ g, i }))
+                  .filter(({ i }) => !filteredIds || filteredIds.has(i))
+                  .map(({ g, i }) => (
+                    <tr key={i} className={i % 2 === 0 ? 'hs-row-even' : 'hs-row-odd'}>
+                      <td className="hs-td-num">{i}</td>
+                      <td className="hs-td-num" style={{ fontFamily: 'monospace' }}>obj {g.first_obj}</td>
+                      <td className="hs-td hs-td-type">{g.obj_type ?? '\u2014'}</td>
+                      <td className="hs-td-num">{g.nobjects}</td>
+                      <td className="hs-td-num">{fmtBytes(g.group_length)}</td>
+                      <td className="hs-td-num">
+                        <span className={g.section === 'first_page' ? 'hs-badge-fp' : 'hs-badge-rest'}>
+                          {g.section === 'first_page' ? 'First page' : 'Rest of file'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                }
               </tbody>
             </table>
           </div>
