@@ -157,10 +157,10 @@ export default function HintStreamPane({ data }: Props) {
               <tr><td className="hs-key">Min page length</td><td className="hs-val">{fmtBytes(data.page_header.min_page_length)}</td></tr>
               <tr><td className="hs-key">Bits for Δ page length</td><td className="hs-val">{data.page_header.nbits_delta_page_length}</td></tr>
               <tr><td className="hs-key">Bits for Δ obj count</td><td className="hs-val">{data.page_header.nbits_delta_nobjects}</td></tr>
-              <tr><td className="hs-key">Min content stream offset</td><td className="hs-val">{fmtBytes(data.page_header.min_co_offset)}</td></tr>
-              <tr><td className="hs-key">Bits for Δ content offset</td><td className="hs-val">{data.page_header.nbits_delta_co_offset}</td></tr>
-              <tr><td className="hs-key">Min content stream length</td><td className="hs-val">{fmtBytes(data.page_header.min_co_length)}</td></tr>
-              <tr><td className="hs-key">Bits for Δ content length</td><td className="hs-val">{data.page_header.nbits_delta_co_length}</td></tr>
+              <tr><td className="hs-key" title="Acrobat always writes 0 (impl. note 126): not used for seeking">Min content stream offset</td><td className="hs-val">{data.page_header.min_co_offset === 0 ? '0 (not provided)' : fmtBytes(data.page_header.min_co_offset)}</td></tr>
+              <tr><td className="hs-key" title="Acrobat always writes 0 (impl. note 126)">Bits for Δ content offset</td><td className="hs-val">{data.page_header.nbits_delta_co_offset}</td></tr>
+              <tr><td className="hs-key" title="Acrobat always writes 0 here (impl. note 127); per-page content_length = delta_page_length, not the stream /Length">Min content stream length</td><td className="hs-val">{data.page_header.min_co_length === 0 ? '0 (not provided)' : fmtBytes(data.page_header.min_co_length)}</td></tr>
+              <tr><td className="hs-key" title="Acrobat sets this equal to 'Bits for Δ page length' (impl. note 127)">Bits for Δ content length</td><td className="hs-val">{data.page_header.nbits_delta_co_length}</td></tr>
               <tr><td className="hs-key">Bits for shared ref count</td><td className="hs-val">{data.page_header.nbits_nshared}</td></tr>
               <tr><td className="hs-key">Bits for shared identifier</td><td className="hs-val">{data.page_header.nbits_shared_id}</td></tr>
               <tr><td className="hs-key">Fraction (num bits / denom)</td><td className="hs-val">{data.page_header.nbits_shared_num} bits / {data.page_header.shared_denom}</td></tr>
@@ -181,8 +181,8 @@ export default function HintStreamPane({ data }: Props) {
                   <th className="hs-th hs-th-num">Section offset</th>
                   <th className="hs-th hs-th-num">Objects</th>
                   <th className="hs-th hs-th-num">Section length</th>
-                  <th className="hs-th hs-th-num">Content offset</th>
-                  <th className="hs-th hs-th-num">Content length</th>
+                  <th className="hs-th hs-th-num" title="Acrobat always writes 0 (impl. note 126): not meaningful">Content offset</th>
+                  <th className="hs-th hs-th-num" title="Acrobat: equals page_length − min_page_length, not the stream /Length (impl. note 127). Acrobat ignores this when reading.">Content length</th>
                   <th className="hs-th hs-th-num">Shared group IDs</th>
                 </tr>
               </thead>
@@ -201,7 +201,7 @@ export default function HintStreamPane({ data }: Props) {
                       <td className="hs-td-num" style={{ fontFamily: 'monospace' }}>{p.section_offset != null ? fmtOffset(p.section_offset) : '—'}</td>
                       <td className="hs-td-num">{p.nobjects}</td>
                       <td className="hs-td-num">{fmtBytes(p.page_length)}</td>
-                      <td className="hs-td-num">{fmtBytes(p.content_offset)}</td>
+                      <td className="hs-td-num">{p.content_offset === 0 ? '—' : fmtBytes(p.content_offset)}</td>
                       <td className="hs-td-num">{fmtBytes(p.content_length)}</td>
                       <td className="hs-td-num" style={{ fontFamily: 'monospace' }}>
                         {p.nshared === 0

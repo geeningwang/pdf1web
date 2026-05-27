@@ -869,9 +869,19 @@ def get_hint_stream(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     if hint_tables.get("pages") and hint_tables.get("page_header"):
         fp_offset = hint_tables["page_header"]["first_page_offset"]
         eof1p = lin_params.get("end_of_first_page") or 0
+        hint_offset_val = lin_params.get("hint_offset") or 0
+        hint_length_val = lin_params.get("hint_length") or 0
+        # Apply adjusted_offset correction (qpdf QPDF_linearization.cc):
+        # hint table offsets are computed without the hint stream's own bytes.
+        # If first_page_offset >= H_offset, the actual file position = fp_offset + H_length.
+        actual_fp_offset = (
+            fp_offset + hint_length_val
+            if hint_offset_val > 0 and fp_offset >= hint_offset_val
+            else fp_offset
+        )
         hint_pages = hint_tables["pages"]
         if hint_pages:
-            hint_pages[0]["section_offset"] = fp_offset
+            hint_pages[0]["section_offset"] = actual_fp_offset
             cum = eof1p
             for i in range(1, len(hint_pages)):
                 hint_pages[i]["section_offset"] = cum
