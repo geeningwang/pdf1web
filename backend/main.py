@@ -837,14 +837,12 @@ def _parse_hint_stream(raw: bytes, n_pages: int, shared_offset: int, first_page_
     sskip_byte()
 
     # Compute first PDF object number for each group.
-    # First-page shared objects come AFTER page 0's private objects in the
-    # numbering scheme: they start at first_page_obj + nobjects[0].
-    # (qpdf assigns: page dict = O, page 0 privates = O+1..O+n-1,
-    #  first-page shared = O+n onward)
+    # First-page shared groups start at first_page_obj (/O in the lin dict).
+    # They are laid out in file order within page 0's section — the same
+    # objects that make up page 0's section are the first-page shared groups.
     # Non-first-page shared objects start from first_shared_obj (shared header).
-    fp_nobjects = pages[0]["nobjects"] if pages else 0
     shared_groups = []
-    obj_cursor = first_page_obj + fp_nobjects
+    obj_cursor = first_page_obj
     for i in range(n_groups):
         if i == nshared_first_page:
             obj_cursor = first_shared_obj
