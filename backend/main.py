@@ -184,48 +184,62 @@ def _save_upload(upload_id: str, filename: str, data: bytes, doc: PdfDocument) -
     (upload_dir / "analysis.log").write_text("\n".join(lines), encoding="utf-8")
 
 
-def _annotate_tree_type_labels(root: "PdfNode", doc: PdfDocument,
-                                backref_index: dict[int, list[dict]]) -> None:
-    """Post-process the tree to add a fast type_label to every object node.
+# ---------------------------------------------------------------------------
+# Centralized object classifier — single source of truth for type labels.
+# Used by the tree view, XRef table, and per-object detail endpoint so all
+# surfaces always show the same label.
+# ---------------------------------------------------------------------------
 
-    Uses backref paths and object content only — no FlateDecode — so it runs
-    cheaply over the entire document at upload time.
-    """
-    _IMG_FILTER = {
-        "DCTDecode": "JPEG", "JPXDecode": "JPEG 2000",
-        "FlateDecode": "Flate", "CCITTFaxDecode": "CCITT", "JBIG2Decode": "JBIG2",
-    }
-    _PDF_TYPE_MAP = {
-        "Page": "Page", "Pages": "Pages Tree", "Catalog": "Catalog",
-        "Font": "Font", "FontDescriptor": "Font Descriptor",
-        "XObject": "XObject", "ObjStm": "Object Stream",
-        "XRef": "Cross-Reference Stream", "Annot": "Annotation",
-        "Action": "Action", "Encoding": "Encoding",
-        "Pattern": "Pattern", "Shading": "Shading",
-        "ExtGState": "Graphics State", "Metadata": "Metadata Stream",
-        "OCG": "Optional Content Group", "OCMD": "Optional Content Membership",
-        "Outlines": "Outlines",
-    }
-    _SUBTYPE_Q = {"Font", "XObject", "Action", "Annot", "Pattern", "Shading"}
-    _CS_ARRAY = {"Indexed", "ICCBased", "CalRGB", "CalGray", "Lab",
-                 "Separation", "DeviceN", "Pattern"}
-    _PROCSET  = {"PDF", "Text", "ImageB", "ImageC", "ImageI"}
+_IMG_FILTER_NICK: dict[str, str] = {
+    "DCTDecode": "JPEG", "JPXDecode": "JPEG 2000",
+    "FlateDecode": "Flate", "CCITTFaxDecode": "CCITT", "JBIG2Decode": "JBIG2",
+}
+_PDF_TYPE_MAP: dict[str, str] = {
+    "Page": "Page", "Pages": "Pages Tree", "Catalog": "Catalog",
+    "Font": "Font", "FontDescriptor": "Font Descriptor",
+    "XObject": "XObject", "ObjStm": "Object Stream",
+    "XRef": "Cross-Reference Stream", "Annot": "Annotation",
+    "Action": "Action", "Encoding": "Encoding",
+    "Pattern": "Pattern", "Shading": "Shading",
+    "ExtGState": "Graphics State", "Metadata": "Metadata Stream",
+    "OCG": "Optional Content Group", "OCMD": "Optional Content Membership",
+    "Outlines": "Outlines", "Filespec": "File Specification",
+    "EmbeddedFile": "Embedded File",
+}
+_SUBTYPE_Q: set[str] = {"Font", "XObject", "Action", "Annot", "Pattern", "Shading"}
+_CS_ARRAY_NAMES: set[str] = {
+    "Indexed", "ICCBased", "CalRGB", "CalGray", "Lab",
+    "Separation", "DeviceN", "Pattern",
+}
+_PROCSET_NAMES: set[str] = {"PDF", "Text", "ImageB", "ImageC", "ImageI"}
+_SCALAR_TYPES: dict = {
+    PdfObjType.Integer: "Integer", PdfObjType.Real: "Real",
+    PdfObjType.Name: "Name", PdfObjType.LiteralString: "String",
+    PdfObjType.HexString: "String", PdfObjType.Boolean: "Boolean",
+    PdfObjType.Reference: "Reference", PdfObjType.Null: "Null",
+}
 
-    def _label(num: int, gen: int) -> str:
+
+def _classify_object(
+    num: int,
+    gen: int,
+    doc: "PdfDocument",
+    backref_index: dict[int, list[dict]],
+) -> str:
+    """Return a human-readable semantic type label for an indirect PDF object."""
+    try:
         obj = doc.resolve_num(num, gen)
         if obj is None:
             return "—"
         refs = backref_index.get(num, [])
 
-        # ── Semantic detection via backref paths ───────────────────────
+        # ── Semantic detection via backref paths ──────────────────────
         for r in refs:
             kp = r.get("key_path", "")
             tn = r.get("type_name", "")
             from_num = r.get("from_num", -1)
-            # /Contents → content stream (direct or via array)
             if kp == "Contents":
                 return "Content Stream (Array)" if obj.is_array() else "Content Stream"
-            # Stream inside a /Contents array
             if kp.startswith("[") and obj.type == PdfObjType.Stream:
                 for pr in backref_index.get(from_num, []):
                     if pr.get("key_path") == "Contents":
@@ -238,6 +252,10 @@ def _annotate_tree_type_labels(root: "PdfNode", doc: PdfDocument,
                 return "CID-to-GID Map"
             if kp == "CIDSet" and tn == "FontDescriptor":
                 return "CID Set"
+            if kp == "Info" and tn == "Trailer":
+                return "Document Info"
+            if "ExtGState" in kp:
+                return "Graphics State"
             if kp == "Thumb":
                 return "Page Thumbnail"
             if kp == "[1]":
@@ -253,12 +271,12 @@ def _annotate_tree_type_labels(root: "PdfNode", doc: PdfDocument,
                         and parent.arr[0].sval == "Indexed"):
                     return "Color Palette"
 
-        # ── Dict / Stream ──────────────────────────────────────────────
+        # ── Dict / Stream ─────────────────────────────────────────────
         if obj.is_dict() or obj.type == PdfObjType.Stream:
             st = obj.get("Subtype")
             if st.is_name() and st.sval == "Image":
                 fobj = obj.get("Filter")
-                nick = _IMG_FILTER.get(fobj.sval if fobj.is_name() else "", "")
+                nick = _IMG_FILTER_NICK.get(fobj.sval if fobj.is_name() else "", "")
                 return f"Image ({nick})" if nick else "Image"
             tk = obj.get("Type")
             sk = obj.get("Subtype")
@@ -280,27 +298,27 @@ def _annotate_tree_type_labels(root: "PdfNode", doc: PdfDocument,
                 return "Stream"
             return "Dictionary"
 
-        # ── Array ──────────────────────────────────────────────────────
+        # ── Array ─────────────────────────────────────────────────────
         if obj.is_array():
             arr = obj.arr
-            if arr and arr[0].is_name() and arr[0].sval in _CS_ARRAY:
+            if arr and arr[0].is_name() and arr[0].sval in _CS_ARRAY_NAMES:
                 return f"Color Space ({arr[0].sval})"
-            if arr and all(item.is_name() and item.sval in _PROCSET for item in arr):
+            if arr and all(item.is_name() and item.sval in _PROCSET_NAMES for item in arr):
                 return "Procedure Set"
             return "Array"
 
-        # ── Scalar fallback ────────────────────────────────────────────
-        _STRUCT = {
-            PdfObjType.Integer: "Integer", PdfObjType.Real: "Real",
-            PdfObjType.Name: "Name", PdfObjType.LiteralString: "String",
-            PdfObjType.HexString: "String", PdfObjType.Boolean: "Boolean",
-            PdfObjType.Reference: "Reference", PdfObjType.Null: "Null",
-        }
-        return _STRUCT.get(obj.type, "Unknown")
+        return _SCALAR_TYPES.get(obj.type, "Unknown")
+    except Exception:
+        return "?"
+
+
+def _annotate_tree_type_labels(root: "PdfNode", doc: PdfDocument,
+                                backref_index: dict[int, list[dict]]) -> None:
+    """Post-process the tree to add type_label to every object node."""
 
     def _walk(node: "PdfNode") -> None:
         if node.obj_num >= 0:
-            node.type_label = _label(node.obj_num, node.gen_num)
+            node.type_label = _classify_object(node.obj_num, node.gen_num, doc, backref_index)
         for child in node.children:
             _walk(child)
 
@@ -519,6 +537,9 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         # Page thumbnail: Page.Thumb → image stream (no /Subtype /Image required)
         if kp == "Thumb":
             is_thumb = True
+        # Document Information Dictionary: Trailer.Info → dict
+        # Graphics State Parameter Dictionary: Resources.ExtGState.xxx → dict
+        # (both now handled centrally by _classify_object)
         # Content stream: Page.Contents → stream (direct reference)
         if kp == "Contents" and tn == "Page":
             is_content_stream = True
@@ -540,100 +561,9 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
                 image_filter = fobj2.sval
 
     # ------------------------------------------------------------------ #
-    # Derive a human-readable type label                                   #
-    # Priority: semantic flags → /Type dict key → backref context → structural
+    # Type label — shared classifier keeps all surfaces in sync            #
     # ------------------------------------------------------------------ #
-    _IMG_FILTER_NICK = {
-        "DCTDecode": "JPEG", "JPXDecode": "JPEG 2000",
-        "FlateDecode": "Flate", "CCITTFaxDecode": "CCITT", "JBIG2Decode": "JBIG2",
-    }
-    _PDF_TYPE_MAP = {
-        "Page": "Page", "Pages": "Pages Tree", "Catalog": "Catalog",
-        "Font": "Font", "FontDescriptor": "Font Descriptor",
-        "XObject": "XObject", "ObjStm": "Object Stream",
-        "XRef": "Cross-Reference Stream", "Annot": "Annotation",
-        "Action": "Action", "Encoding": "Encoding",
-        "Pattern": "Pattern", "Shading": "Shading",
-        "ExtGState": "Graphics State", "Metadata": "Metadata Stream",
-        "OCG": "Optional Content Group", "OCMD": "Optional Content Membership",
-        "Outlines": "Outlines", "Filespec": "File Specification",
-        "EmbeddedFile": "Embedded File",
-    }
-    _SUBTYPE_QUALIFIES = {"Font", "XObject", "Action", "Annot", "Pattern", "Shading"}
-
-    if is_thumb:
-        type_label: str = "Page Thumbnail"
-    elif is_image:
-        nick = _IMG_FILTER_NICK.get(image_filter or "", "")
-        type_label = f"Image ({nick})" if nick else "Image"
-    elif is_content_stream and obj and obj.is_array():
-        type_label = "Content Stream (Array)"
-    elif is_content_stream:
-        type_label = "Content Stream"
-    elif is_icc_profile:
-        type_label = "ICC Profile"
-    elif is_palette:
-        type_label = "Color Palette"
-    elif is_tounicode:
-        type_label = "ToUnicode CMap"
-    elif is_ttf:
-        type_label = "Font File (TrueType)"
-    elif is_font_descriptor:
-        type_label = "Font Descriptor"
-    elif is_cid_to_gid_map:
-        type_label = "CID-to-GID Map"
-    elif is_cid_set:
-        type_label = "CID Set"
-    elif obj and (obj.is_dict() or obj.type == PdfObjType.Stream):
-        type_key = obj.get("Type")
-        sub_key = obj.get("Subtype")
-        if type_key.is_name():
-            base = _PDF_TYPE_MAP.get(type_key.sval, type_key.sval)
-            st = sub_key.sval if sub_key.is_name() else None
-            type_label = f"{base} ({st})" if st and type_key.sval in _SUBTYPE_QUALIFIES else base
-        elif obj.type == PdfObjType.Stream:
-            # Generic stream — derive context from first backref
-            refs_here = backref_index.get(num, [])
-            if refs_here:
-                r0 = refs_here[0]
-                ptype = r0["type_name"]
-                # Parent is an anonymous Array — traverse one more level for context
-                if ptype == "Array":
-                    arr_refs = backref_index.get(r0["from_num"], [])
-                    if arr_refs and arr_refs[0].get("key_path") == "Contents":
-                        type_label = "Content Stream"
-                    elif arr_refs:
-                        up = arr_refs[0]["type_name"]
-                        type_label = f"Stream of {up}" if up and up not in ("", "unknown") else "Stream"
-                    else:
-                        type_label = "Stream"
-                else:
-                    type_label = f"Stream of {ptype}" if ptype and ptype not in ("", "unknown") else "Stream"
-            else:
-                type_label = "Stream"
-        else:
-            type_label = "Dictionary"
-    elif obj and obj.is_array():
-        _CS_ARRAY_NAMES = {"Indexed", "ICCBased", "CalRGB", "CalGray", "Lab",
-                           "Separation", "DeviceN", "Pattern"}
-        _PROCSET_NAMES = {"PDF", "Text", "ImageB", "ImageC", "ImageI"}
-        arr = obj.arr
-        if arr and arr[0].is_name() and arr[0].sval in _CS_ARRAY_NAMES:
-            type_label = f"Color Space ({arr[0].sval})"
-        elif arr and all(item.is_name() and item.sval in _PROCSET_NAMES for item in arr):
-            type_label = "Procedure Set"
-        else:
-            type_label = "Array"
-    elif obj:
-        _STRUCT = {
-            PdfObjType.Integer: "Integer", PdfObjType.Real: "Real",
-            PdfObjType.Name: "Name", PdfObjType.LiteralString: "String",
-            PdfObjType.HexString: "String", PdfObjType.Boolean: "Boolean",
-            PdfObjType.Reference: "Reference", PdfObjType.Null: "Null",
-        }
-        type_label = _STRUCT.get(obj.type, "Unknown")
-    else:
-        type_label = "—"
+    type_label: str = _classify_object(num, gen, doc, backref_index)
 
     return {
         "detail": detail,
@@ -840,114 +770,8 @@ def get_xref_table(upload_id: str) -> dict[str, Any]:
         next_off = sorted_inuse[i + 1][1].offset if i + 1 < len(sorted_inuse) else file_size
         obj_sizes[num] = next_off - xe.offset
 
-    # Same label logic as _annotate_tree_type_labels so Kind column matches tree view
-    _IMG_FILTER = {
-        "DCTDecode": "JPEG", "JPXDecode": "JPEG 2000",
-        "FlateDecode": "Flate", "CCITTFaxDecode": "CCITT", "JBIG2Decode": "JBIG2",
-    }
-    _PDF_TYPE_MAP = {
-        "Page": "Page", "Pages": "Pages Tree", "Catalog": "Catalog",
-        "Font": "Font", "FontDescriptor": "Font Descriptor",
-        "XObject": "XObject", "ObjStm": "Object Stream",
-        "XRef": "Cross-Reference Stream", "Annot": "Annotation",
-        "Action": "Action", "Encoding": "Encoding",
-        "Pattern": "Pattern", "Shading": "Shading",
-        "ExtGState": "Graphics State", "Metadata": "Metadata Stream",
-        "OCG": "Optional Content Group", "OCMD": "Optional Content Membership",
-        "Outlines": "Outlines",
-    }
-    _SUBTYPE_Q = {"Font", "XObject", "Action", "Annot", "Pattern", "Shading"}
-    _CS_ARRAY = {"Indexed", "ICCBased", "CalRGB", "CalGray", "Lab",
-                 "Separation", "DeviceN", "Pattern"}
-    _PROCSET  = {"PDF", "Text", "ImageB", "ImageC", "ImageI"}
-    _SCALAR   = {
-        PdfObjType.Integer: "Integer", PdfObjType.Real: "Real",
-        PdfObjType.Name: "Name", PdfObjType.LiteralString: "String",
-        PdfObjType.HexString: "String", PdfObjType.Boolean: "Boolean",
-        PdfObjType.Reference: "Reference", PdfObjType.Null: "Null",
-    }
-
     def _obj_kind(num: int, gen: int) -> str:
-        """Returns the same label string used by the tree-view type_label."""
-        try:
-            obj = doc.resolve_num(num, gen)
-            if obj is None:
-                return "—"
-            refs = backref_index.get(num, [])
-
-            # Backref-based semantic labels (mirrors _annotate_tree_type_labels)
-            for r in refs:
-                kp = r.get("key_path", "")
-                tn = r.get("type_name", "")
-                from_num = r.get("from_num", -1)
-                if kp == "Contents":
-                    return "Content Stream (Array)" if obj.is_array() else "Content Stream"
-                if kp.startswith("[") and obj.type == PdfObjType.Stream:
-                    for pr in backref_index.get(from_num, []):
-                        if pr.get("key_path") == "Contents":
-                            return "Content Stream"
-                if kp == "FontFile2" and tn == "FontDescriptor":
-                    return "Font File (TrueType)"
-                if kp == "ToUnicode" and tn == "Font":
-                    return "ToUnicode CMap"
-                if kp == "CIDToGIDMap" and tn == "Font":
-                    return "CID-to-GID Map"
-                if kp == "CIDSet" and tn == "FontDescriptor":
-                    return "CID Set"
-                if kp == "Thumb":
-                    return "Page Thumbnail"
-                if kp == "[1]":
-                    parent = doc.resolve_num(from_num, 0)
-                    if (parent and parent.is_array() and len(parent.arr) >= 2
-                            and parent.arr[0].is_name()
-                            and parent.arr[0].sval == "ICCBased"):
-                        return "ICC Profile"
-                if kp == "[3]":
-                    parent = doc.resolve_num(from_num, 0)
-                    if (parent and parent.is_array() and len(parent.arr) >= 4
-                            and parent.arr[0].is_name()
-                            and parent.arr[0].sval == "Indexed"):
-                        return "Color Palette"
-
-            # Dict / Stream
-            if obj.is_dict() or obj.type == PdfObjType.Stream:
-                st = obj.get("Subtype")
-                if st.is_name() and st.sval == "Image":
-                    fobj = obj.get("Filter")
-                    nick = _IMG_FILTER.get(fobj.sval if fobj.is_name() else "", "")
-                    return f"Image ({nick})" if nick else "Image"
-                tk = obj.get("Type")
-                sk = obj.get("Subtype")
-                if tk.is_name():
-                    base = _PDF_TYPE_MAP.get(tk.sval, tk.sval)
-                    sub = sk.sval if sk.is_name() else None
-                    return f"{base} ({sub})" if sub and tk.sval in _SUBTYPE_Q else base
-                if obj.type == PdfObjType.Stream:
-                    if refs:
-                        r0 = refs[0]
-                        ptype = r0["type_name"]
-                        if ptype == "Array":
-                            arr_refs = backref_index.get(r0["from_num"], [])
-                            if arr_refs and arr_refs[0].get("key_path") == "Contents":
-                                return "Content Stream"
-                            up = arr_refs[0]["type_name"] if arr_refs else ""
-                            return f"Stream of {up}" if up and up not in ("", "unknown") else "Stream"
-                        return f"Stream of {ptype}" if ptype and ptype not in ("", "unknown") else "Stream"
-                    return "Stream"
-                return "Dictionary"
-
-            # Array
-            if obj.is_array():
-                arr = obj.arr
-                if arr and arr[0].is_name() and arr[0].sval in _CS_ARRAY:
-                    return f"Color Space ({arr[0].sval})"
-                if arr and all(item.is_name() and item.sval in _PROCSET for item in arr):
-                    return "Procedure Set"
-                return "Array"
-
-            return _SCALAR.get(obj.type, "Unknown")
-        except Exception:
-            return "?"
+        return _classify_object(num, gen, doc, backref_index)
 
     rows: list[dict[str, Any]] = []
     for obj_num in sorted(entries):
