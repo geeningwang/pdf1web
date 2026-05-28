@@ -117,7 +117,7 @@ function EtypeBadge({ etype }: { etype: XRefEntry['etype'] }) {
 // Main component
 // ---------------------------------------------------------------------------
 type Filter = 'all' | 'in_use' | 'free' | 'compressed'
-type SortCol = 'obj_num' | 'offset' | 'gen' | 'size_bytes'
+type SortCol = 'obj_num' | 'offset' | 'gen' | 'size_bytes' | 'kind'
 type SortDir = 'asc' | 'desc'
 
 function fmtSize(bytes: number | undefined): string {
@@ -150,6 +150,12 @@ const XRefPane: React.FC<Props> = ({ data, onJumpToObj }) => {
   const filtered = useMemo(() => {
     const rows = filter === 'all' ? data.entries : data.entries.filter(e => e.etype === filter)
     return [...rows].sort((a, b) => {
+      if (sortCol === 'kind') {
+        const ak = a.kind ?? ''
+        const bk = b.kind ?? ''
+        const cmp = ak.localeCompare(bk)
+        return sortDir === 'asc' ? cmp : -cmp
+      }
       let av: number, bv: number
       if (sortCol === 'obj_num') { av = a.obj_num; bv = b.obj_num }
       else if (sortCol === 'gen') { av = a.gen; bv = b.gen }
@@ -236,7 +242,9 @@ const XRefPane: React.FC<Props> = ({ data, onJumpToObj }) => {
                 Obj <SortArrow col="obj_num" />
               </th>
               <th className="xrp-th xrp-th--type">XRef</th>
-              <th className="xrp-th xrp-th--kind">Kind</th>
+              <th className="xrp-th xrp-th--kind" onClick={() => toggleSort('kind')}>
+                Object Type <SortArrow col="kind" />
+              </th>
               <th className="xrp-th xrp-th--gen" onClick={() => toggleSort('gen')}>
                 Gen <SortArrow col="gen" />
               </th>

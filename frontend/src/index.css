@@ -2071,7 +2071,7 @@ html, body, #root {
 .xrp-th:hover { color: #bbb; }
 .xrp-th--obj   { width: 52px; }
 .xrp-th--type  { width: 78px; cursor: default; }
-.xrp-th--kind  { cursor: default; }
+.xrp-th--kind  { cursor: pointer; }
 .xrp-th--gen   { width: 40px; }
 .xrp-th--size  { width: 76px; text-align: left; }
 .xrp-th--offset { }
