@@ -86,7 +86,6 @@ interface Props {
 
 const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
   const displayed = data.operations
-  const hiddenCount = 0
   const canRender = !!uploadId && !!data.media_box
   const hasInvisibleText = data.operations.some(
     op => op.op === 'Tr' && op.operands.length >= 1 && op.operands[0].value === '3'

@@ -507,6 +507,7 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     is_tounicode = False
     is_font_descriptor = False
     is_font = False
+    is_type0_font = False
     is_ttf = False
     is_cid_to_gid_map = False
     is_cid_set = False
@@ -523,6 +524,8 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
             st2 = obj.get("Subtype")
             if not (st2.is_name() and st2.sval in ("Type0", "CIDFontType0", "CIDFontType2")):
                 is_font = True
+            elif st2.is_name() and st2.sval == "Type0":
+                is_type0_font = True
         if obj.type == PdfObjType.Stream:
             from pdf.filters import flat_decode
             fobj = obj.get("Filter")
@@ -624,6 +627,7 @@ def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "is_tounicode": is_tounicode,
         "is_font_descriptor": is_font_descriptor,
         "is_font": is_font,
+        "is_type0_font": is_type0_font,
         "is_ttf": is_ttf,
         "is_cid_to_gid_map": is_cid_to_gid_map,
         "is_cid_set": is_cid_set,
@@ -1163,6 +1167,109 @@ def get_font_info(upload_id: str, num: int, gen: int) -> dict[str, Any]:
         "cmap": cmap,
         "font_descriptor_num": fd_num,
         "to_unicode_num": to_unicode_num,
+    }
+
+
+@app.get("/api/type0font/{upload_id}/{num}/{gen}")
+def get_type0_font_info(upload_id: str, num: int, gen: int) -> dict[str, Any]:
+    """Return metadata for a Type0 (composite/CID) Font dict."""
+    doc = _sessions.get(upload_id)
+    if doc is None:
+        raise HTTPException(404, "Session not found")
+    obj = doc.resolve_num(num, gen)
+    if obj is None or not obj.is_dict():
+        raise HTTPException(404, "Object not found")
+
+    type_key = obj.get("Type")
+    if not (type_key.is_name() and type_key.sval == "Font"):
+        raise HTTPException(422, "Not a Font object")
+    st = obj.get("Subtype")
+    if not (st.is_name() and st.sval == "Type0"):
+        raise HTTPException(422, "Not a Type0 font")
+
+    base_font_obj = obj.get("BaseFont")
+    enc_obj = obj.get("Encoding")
+    to_unicode_ref = obj.get("ToUnicode")
+
+    encoding = enc_obj.sval if enc_obj.is_name() else None
+    to_unicode_num: int | None = to_unicode_ref.ref.num if to_unicode_ref.is_ref() else None
+
+    # Resolve DescendantFonts[0] — the CIDFont dict
+    descendant_num: int | None = None
+    cid_subtype: str | None = None
+    cid_base_font: str | None = None
+    cid_registry: str | None = None
+    cid_ordering: str | None = None
+    cid_supplement: int | None = None
+    default_width: int = 1000
+    is_embedded = False
+    font_descriptor_num: int | None = None
+
+    df_obj = obj.get("DescendantFonts")
+    if df_obj.is_array() and df_obj.arr:
+        df0 = df_obj.arr[0]
+        df0_dict = None
+        if df0.is_ref():
+            descendant_num = df0.ref.num
+            df0_dict = doc.resolve_num(df0.ref.num, df0.ref.gen)
+        elif df0.is_dict():
+            df0_dict = df0
+        if df0_dict is not None and df0_dict.is_dict():
+            cid_st = df0_dict.get("Subtype")
+            cid_bf = df0_dict.get("BaseFont")
+            cid_subtype = cid_st.sval if cid_st.is_name() else None
+            cid_base_font = cid_bf.sval if cid_bf.is_name() else None
+            dw_obj = df0_dict.get("DW")
+            if dw_obj.is_int():
+                default_width = int(dw_obj.ival)
+            # CIDSystemInfo
+            csi = df0_dict.get("CIDSystemInfo")
+            if csi.is_dict():
+                reg = csi.get("Registry")
+                ord_ = csi.get("Ordering")
+                sup = csi.get("Supplement")
+                cid_registry = reg.sval if reg.is_name() else (reg.decoded if hasattr(reg, 'decoded') and reg.type == PdfObjType.String else None)
+                cid_ordering = ord_.sval if ord_.is_name() else (ord_.decoded if hasattr(ord_, 'decoded') and ord_.type == PdfObjType.String else None)
+                cid_supplement = int(sup.ival) if sup.is_int() else None
+                # fallback: get string value from sval
+                if cid_registry is None and hasattr(reg, 'sval'):
+                    cid_registry = reg.sval
+                if cid_ordering is None and hasattr(ord_, 'sval'):
+                    cid_ordering = ord_.sval
+            # FontDescriptor
+            fd_ref = df0_dict.get("FontDescriptor")
+            if fd_ref.is_ref():
+                font_descriptor_num = fd_ref.ref.num
+                fd_obj = doc.resolve_num(fd_ref.ref.num, fd_ref.ref.gen)
+                if fd_obj is not None and fd_obj.is_dict():
+                    for ff_key in ("FontFile", "FontFile2", "FontFile3"):
+                        if fd_obj.get(ff_key).is_ref():
+                            is_embedded = True
+                            break
+
+    # ToUnicode cmap
+    cmap: dict[str, str] = {}
+    if to_unicode_num is not None:
+        tu_obj = doc.resolve_num(to_unicode_num, 0)
+        if tu_obj is not None:
+            raw_cmap = _parse_cmap_from_stream(tu_obj)
+            cmap = {str(k): v for k, v in raw_cmap.items()}
+
+    return {
+        "base_font": base_font_obj.sval if base_font_obj.is_name() else None,
+        "encoding": encoding,
+        "subtype": "Type0",
+        "to_unicode_num": to_unicode_num,
+        "descendant_num": descendant_num,
+        "cid_subtype": cid_subtype,
+        "cid_base_font": cid_base_font,
+        "cid_registry": cid_registry,
+        "cid_ordering": cid_ordering,
+        "cid_supplement": cid_supplement,
+        "default_width": default_width,
+        "is_embedded": is_embedded,
+        "font_descriptor_num": font_descriptor_num,
+        "cmap": cmap,
     }
 
 

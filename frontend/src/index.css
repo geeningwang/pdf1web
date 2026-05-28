@@ -1380,11 +1380,6 @@ html, body, #root {
   padding: 0 12px 8px; border-bottom: 1px solid var(--border);
   display: flex; align-items: baseline; gap: 8px;
 }
-.fd-font-name {
-  font-family: monospace; font-size: 12px; font-weight: 400;
-  text-transform: none; letter-spacing: 0; color: var(--text);
-}
-
 .fd-body {
   display: flex; flex-wrap: wrap; gap: 16px;
   padding: 10px 12px;
@@ -1627,6 +1622,35 @@ html, body, #root {
    SimpleFontPane
    ========================================================================== */
 
+/* Shared font name title — used by all font visualization panes */
+.font-pane-name-title {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  padding: 10px 12px 9px;
+  border-bottom: 1px solid var(--border);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* When a rendered-as subtitle follows, drop the title's bottom border */
+.font-pane-name-title:has(+ .font-pane-rendered-as) {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+
+.font-pane-rendered-as {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-dim);
+  padding: 2px 12px 9px;
+  border-bottom: 1px solid var(--border);
+}
+
 .sfp-root {
   padding: 0 0 16px 0;
   display: flex;
@@ -1639,6 +1663,9 @@ html, body, #root {
   padding: 10px 12px 8px;
   background: var(--bg1);
   border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .sfp-sample-preview {
@@ -1646,7 +1673,6 @@ html, body, #root {
   font-size: 18px;
   line-height: 1.5;
   color: var(--text);
-  margin-bottom: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1657,13 +1683,6 @@ html, body, #root {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-}
-
-.sfp-font-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  font-family: var(--font-mono);
 }
 
 .sfp-badge {
@@ -1678,6 +1697,12 @@ html, body, #root {
   background: rgba(78,140,255,0.12);
   border-color: rgba(78,140,255,0.35);
   color: #6ea8fe;
+}
+
+.sfp-badge--cidsubtype {
+  background: rgba(78,140,255,0.08);
+  border-color: rgba(78,140,255,0.25);
+  color: #a5d6a7;
 }
 
 .sfp-badge--encoding {
@@ -1718,58 +1743,6 @@ html, body, #root {
 .sfp-jump-btn:hover {
   background: var(--bg3, #333);
   border-color: var(--accent);
-}
-
-/* Resolved font row */
-.sfp-resolved-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
-  margin-top: 6px;
-  font-size: 12px;
-}
-
-.sfp-resolved-label {
-  font-size: 10px;
-  font-family: var(--font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-dim);
-  opacity: 0.6;
-  flex-shrink: 0;
-}
-
-.sfp-resolved-detecting {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-dim);
-  font-style: italic;
-  opacity: 0.5;
-}
-
-.sfp-resolved-family {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  color: #57cc99;
-}
-
-.sfp-resolved-family--fallback {
-  color: #f4a261;
-}
-
-.sfp-resolved-note {
-  font-size: 11px;
-  color: var(--text-dim);
-  font-style: italic;
-  opacity: 0.75;
-}
-
-.sfp-resolved-note--warn {
-  color: #f4a261;
-  font-style: normal;
-  opacity: 1;
 }
 
 /* --- Sections --- */
@@ -1921,6 +1894,164 @@ html, body, #root {
   margin: 0;
   padding: 0;
 }
+
+/* ===========================================================================
+   Type0FontPane
+   =========================================================================== */
+
+.t0fp-cidsys-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.t0fp-cidsys-label {
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.t0fp-cidsys-value {
+  font-family: var(--font-mono);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.t0fp-cidsys-part {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.t0fp-cidsys-key {
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+.t0fp-dw-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.t0fp-dw-label {
+  font-weight: 600;
+}
+
+.t0fp-dw-value {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.t0fp-links-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.t0fp-jump-btn {
+  background: none;
+  border: 1px solid var(--border, #333);
+  border-radius: 3px;
+  color: #58a6ff;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 7px;
+}
+.t0fp-jump-btn:hover {
+  background: #1a2d44;
+}
+
+.t0fp-section {
+  margin-top: 10px;
+}
+
+.t0fp-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.t0fp-section-subtitle {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.t0fp-note {
+  color: #f4a261;
+}
+
+/* CMap gallery */
+.t0fp-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.t0fp-glyph-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--bg2, #1e1e2e);
+  border: 1px solid rgba(88,166,255,0.15);
+  border-radius: 4px;
+  padding: 4px 6px 3px;
+  min-width: 52px;
+  cursor: default;
+  transition: border-color 0.1s, background 0.1s;
+}
+.t0fp-glyph-card:hover {
+  border-color: rgba(88,166,255,0.45);
+  background: #1a2d44;
+}
+
+.t0fp-glyph-char {
+  font-size: 22px;
+  line-height: 1.2;
+  color: var(--text);
+  user-select: none;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.t0fp-glyph-uni {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: #58a6ff;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+.t0fp-glyph-cid {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.t0fp-cmap-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 8px 0;
+  font-style: italic;
+}
+
+
 
 .detail-hs-section {
   margin: 0;

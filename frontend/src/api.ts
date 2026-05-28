@@ -30,6 +30,7 @@ export interface ObjectDetailResponse {
   is_tounicode: boolean
   is_font_descriptor: boolean
   is_font: boolean
+  is_type0_font: boolean
   is_ttf: boolean
   is_cid_to_gid_map: boolean
   is_cid_set: boolean
@@ -564,6 +565,37 @@ export async function fetchFontPane(
   gen: number,
 ): Promise<FontPaneData | null> {
   const res = await fetch(`${BASE}/font/${uploadId}/${num}/${gen}`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+/* -----------------------------------------------------------------------
+   Type0 (composite/CID) Font pane API
+   ----------------------------------------------------------------------- */
+
+export interface Type0FontPaneData {
+  base_font: string | null
+  encoding: string | null
+  subtype: 'Type0'
+  to_unicode_num: number | null
+  descendant_num: number | null
+  cid_subtype: string | null
+  cid_base_font: string | null
+  cid_registry: string | null
+  cid_ordering: string | null
+  cid_supplement: number | null
+  default_width: number
+  is_embedded: boolean
+  font_descriptor_num: number | null
+  cmap: Record<string, string>  // char code (string) → unicode char
+}
+
+export async function fetchType0FontPane(
+  uploadId: string,
+  num: number,
+  gen: number,
+): Promise<Type0FontPaneData | null> {
+  const res = await fetch(`${BASE}/type0font/${uploadId}/${num}/${gen}`)
   if (!res.ok) return null
   return res.json()
 }

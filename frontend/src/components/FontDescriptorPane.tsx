@@ -95,10 +95,8 @@ const METRIC_ROWS: { key: keyof FontDescriptorData; label: string; unit?: string
 export default function FontDescriptorPane({ data, onJumpToObj }: Props) {
   return (
     <div className="fd-pane">
-      <div className="fd-title">
-        FontDescriptor
-        {data.font_name && <span className="fd-font-name">{data.font_name}</span>}
-      </div>
+      <div className="font-pane-name-title">{data.font_name ?? '(unnamed)'}</div>
+      <div className="fd-title">FontDescriptor</div>
 
       <div className="fd-body">
         {/* Em-square diagram */}

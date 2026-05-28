@@ -1,35 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import type { FontPaneData } from '../api'
-
-// ---------------------------------------------------------------------------
-// Font family resolution (mirrors CsCanvasRenderer fontNameToStyle)
-// ---------------------------------------------------------------------------
-interface FontStyle {
-  family: string
-  weight: string
-  style: string
-}
-
-function fontStyleForPdf(baseFontName: string | null): FontStyle {
-  if (!baseFontName) return { family: 'serif', weight: 'normal', style: 'normal' }
-  const s = baseFontName.toLowerCase().replace(/[,_\-\s]+/g, '')
-  const bold   = s.includes('bold')
-  const italic = s.includes('italic') || s.includes('oblique')
-  let family: string
-  if      (s.includes('timesnewroman') || s.includes('times'))   family = '"Times New Roman", Times, serif'
-  else if (s.includes('helvetica') || s.includes('arial'))       family = 'Helvetica, Arial, sans-serif'
-  else if (s.includes('courier'))                                 family = '"Courier New", Courier, monospace'
-  else if (s.includes('symbol'))                                  family = 'Symbol, serif'
-  else if (s.includes('dingbat') || s.includes('zapf'))          family = '"Zapf Dingbats", "Wingdings", serif'
-  else if (s.includes('palatino'))                                family = 'Palatino, "Palatino Linotype", serif'
-  else if (s.includes('garamond'))                                family = 'Garamond, "EB Garamond", serif'
-  else if (s.includes('georgia'))                                 family = 'Georgia, serif'
-  else if (s.includes('verdana'))                                 family = 'Verdana, sans-serif'
-  else if (s.includes('trebuchet'))                               family = '"Trebuchet MS", sans-serif'
-  else if (s.includes('futura'))                                  family = 'Futura, "Century Gothic", sans-serif'
-  else                                                            family = 'serif'
-  return { family, weight: bold ? 'bold' : 'normal', style: italic ? 'italic' : 'normal' }
-}
+import { fontStyleForPdf, detectFont, type FontStyle, type ResolvedFont } from '../fontUtils'
 
 // ---------------------------------------------------------------------------
 // Width bar chart
@@ -201,59 +172,6 @@ interface Props {
   onJumpToObj?: (num: number, gen: number) => void
 }
 
-interface ResolvedFont {
-  family: string       // the matched font name
-  isFallback: boolean  // true if not the first choice in the CSS stack
-  boldSynthesized: boolean
-  italicSynthesized: boolean
-}
-
-const GENERICS = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui'])
-
-// Shared offscreen canvas for font metric comparisons
-const _fc = document.createElement('canvas').getContext('2d')!
-
-/**
- * Detect if a named font is installed by comparing canvas text metrics.
- * Uses monospace as the reference baseline (serif for monospace-like fonts).
- * If the target font is installed, its metrics differ from the fallback.
- */
-function isFontInstalled(family: string, style = 'normal', weight = 'normal'): boolean {
-  const testStr = 'mmmmmmmmmmlli'
-  const size = 72  // large size magnifies metric differences
-  const isLikelyMono = /courier|mono|console|typewriter/i.test(family)
-  const fallback = isLikelyMono ? 'serif' : 'monospace'
-  _fc.font = `${style} ${weight} ${size}px ${fallback}`
-  const baseW = _fc.measureText(testStr).width
-  _fc.font = `${style} ${weight} ${size}px "${family}", ${fallback}`
-  return _fc.measureText(testStr).width !== baseW
-}
-
-function detectFont(fontStyle: FontStyle): ResolvedFont {
-  const families = fontStyle.family
-    .split(',')
-    .map(f => f.trim().replace(/^"|"$|^'|'$/g, ''))
-
-  for (let i = 0; i < families.length; i++) {
-    const family = families[i]
-    if (GENERICS.has(family.toLowerCase())) {
-      return { family: `${family} (generic)`, isFallback: i > 0, boldSynthesized: false, italicSynthesized: false }
-    }
-    if (isFontInstalled(family)) {
-      // Check if the specific bold/italic variant exists or will be synthesized
-      const boldAvail   = fontStyle.weight === 'bold'   ? isFontInstalled(family, 'normal', 'bold')   : true
-      const italicAvail = fontStyle.style  === 'italic' ? isFontInstalled(family, 'italic', 'normal') : true
-      return {
-        family,
-        isFallback: i > 0,
-        boldSynthesized: !boldAvail,
-        italicSynthesized: !italicAvail,
-      }
-    }
-  }
-  return { family: families[families.length - 1] + ' (generic)', isFallback: true, boldSynthesized: false, italicSynthesized: false }
-}
-
 const SimpleFontPane: React.FC<Props> = ({ data, onJumpToObj }) => {
   const fontStyle = useMemo(() => fontStyleForPdf(data.base_font), [data.base_font])
   const [resolvedFont, setResolvedFont] = useState<ResolvedFont | null>(null)
@@ -266,20 +184,13 @@ const SimpleFontPane: React.FC<Props> = ({ data, onJumpToObj }) => {
 
   return (
     <div className="sfp-root">
+      <div className="font-pane-name-title" style={{ fontFamily: fontStyle.family, fontWeight: fontStyle.weight, fontStyle: fontStyle.style }}>{data.base_font ?? '(unnamed)'}</div>
+      {resolvedFont && (
+        <div className="font-pane-rendered-as" style={{ fontFamily: fontStyle.family }}>rendered as {resolvedFont.family}</div>
+      )}
       {/* Header */}
       <div className="sfp-header">
-        <span
-          className="sfp-sample-preview"
-          style={{
-            fontFamily: fontStyle.family,
-            fontWeight: fontStyle.weight,
-            fontStyle: fontStyle.style,
-          }}
-        >
-          {sampleText}
-        </span>
         <div className="sfp-meta-row">
-          <span className="sfp-font-name">{data.base_font ?? '(unnamed)'}</span>
           {data.subtype && (
             <span className="sfp-badge sfp-badge--subtype">{data.subtype}</span>
           )}
@@ -314,31 +225,16 @@ const SimpleFontPane: React.FC<Props> = ({ data, onJumpToObj }) => {
             </button>
           )}
         </div>
-
-        {/* Resolved font row */}
-        <div className="sfp-resolved-row">
-          <span className="sfp-resolved-label">rendered as</span>
-          {resolvedFont == null ? (
-            <span className="sfp-resolved-detecting">detecting…</span>
-          ) : (
-            <>
-              <span className={`sfp-resolved-family${resolvedFont.isFallback ? ' sfp-resolved-family--fallback' : ''}`}>
-                {resolvedFont.family}
-              </span>
-              {resolvedFont.isFallback && (
-                <span className="sfp-resolved-note">
-                  (fallback — "{data.base_font}" not found on this system)
-                </span>
-              )}
-              {resolvedFont.boldSynthesized && (
-                <span className="sfp-resolved-note sfp-resolved-note--warn">bold synthesized</span>
-              )}
-              {resolvedFont.italicSynthesized && (
-                <span className="sfp-resolved-note sfp-resolved-note--warn">italic synthesized</span>
-              )}
-            </>
-          )}
-        </div>
+        <span
+          className="sfp-sample-preview"
+          style={{
+            fontFamily: fontStyle.family,
+            fontWeight: fontStyle.weight,
+            fontStyle: fontStyle.style,
+          }}
+        >
+          {sampleText}
+        </span>
       </div>
 
       {/* Widths chart */}
