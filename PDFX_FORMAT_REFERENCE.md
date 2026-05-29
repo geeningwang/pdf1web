@@ -1,6 +1,6 @@
 # PDFX Format Reference
 
-**Version**: 1.0  
+**Version**: 1.1  
 **Date**: May 2026  
 **Status**: Normative — matches `exporter.py` and `linker.py` as of 360-PDF stress test (278/278 non-linearized binary-exact, 0 errors)
 
@@ -12,16 +12,15 @@
 2. [Directory Layout](#2-directory-layout)
 3. [Artifact Reference](#3-artifact-reference)
    - 3.1 [pdfx_manifest.json](#31-pdfx_manifestjson)
-   - 3.2 [header.bin](#32-headerbin)
-   - 3.3 [header.txt (legacy)](#33-headertxt-legacy)
-   - 3.4 [xref_raw.bin](#34-xref_rawbin)
-   - 3.5 [eof_tail.bin](#35-eof_tailbin)
-   - 3.6 [xref.txt](#36-xreftxt)
-   - 3.7 [trailer.pdfjson](#37-trailerpdfJson)
-   - 3.8 [objects/obj_NNNNN_G.pdfjson](#38-objectsobj_nnnnn_gpdfjson)
-   - 3.9 [objects/obj_NNNNN_G.pdfo](#39-objectsobj_nnnnn_gpdfo)
-   - 3.10 [objects/obj_NNNNN_G.pdfs](#310-objectsobj_nnnnn_gpdfs)
-   - 3.11 [resources/](#311-resources)
+   - 3.2 [header.txt](#32-headertxt)
+   - 3.3 [xref_raw.bin](#33-xref_rawbin)
+   - 3.4 [eof_tail.bin](#34-eof_tailbin)
+   - 3.5 [xref.txt](#35-xreftxt)
+   - 3.6 [trailer.pdfjson](#36-trailerpdfJson)
+   - 3.7 [objects/obj_NNNNN_G.pdfjson](#37-objectsobj_nnnnn_gpdfjson)
+   - 3.8 [objects/obj_NNNNN_G.pdfo](#38-objectsobj_nnnnn_gpdfo)
+   - 3.9 [objects/obj_NNNNN_G.pdfs](#39-objectsobj_nnnnn_gpdfs)
+   - 3.10 [resources/](#310-resources)
 4. [JSON Value Encoding](#4-json-value-encoding)
 5. [Exporter Algorithm](#5-exporter-algorithm)
 6. [Linker Algorithm](#6-linker-algorithm)
@@ -58,11 +57,10 @@ The **exporter** (`exporter.py`) reads a PDF and produces a PDFX directory. The 
 │
 ├── pdfx_manifest.json       REQUIRED — root index, sha256 checksums, object list
 │
-├── header.bin               REQUIRED — verbatim bytes before first object
-├── header.txt               LEGACY   — human-readable header, used if header.bin absent
+├── header.txt               REQUIRED — escaped-line encoding of verbatim pre-first-object bytes
 │
 ├── xref_raw.bin             table-xref, non-linearized PDFs only
-│                            verbatim bytes from startxref_val to EOF
+
 │
 ├── eof_tail.bin             stream-xref PDFs only
 │                            verbatim bytes from 'startxref' keyword to EOF
@@ -188,32 +186,74 @@ Each entry in `objects` describes one exported object. Objects are sorted by `(n
 
 ---
 
-### 3.2 `header.bin`
+### 3.2 `header.txt`
 
-**Verbatim bytes from byte 0 of the original PDF up to (not including) the first valid object.**
+**Verbatim bytes from byte 0 of the original PDF up to (not including) the first valid object, encoded as a single escaped line.**
 
-Contains the `%PDF-X.Y` version line, optional binary comment line (e.g. `%\xe2\xe3\xcf\xd3`), and any whitespace before the first object. Preserves exact EOL style (LF, CRLF, or CR), the exact binary bytes of the binary comment, and any gap bytes.
+The file contains exactly one line of escaped text followed by a single LF file-terminator.
 
-**Why binary, not text**: `header.txt` used `\xNN` escape sequences to represent non-ASCII bytes, which required reconstruction logic in the linker. A single stray newline difference caused a 1-byte off-by-one that cascaded to a mismatch in the entire xref section.
+#### Encoding rules
 
-**First-valid-object boundary**: The exporter parses the actual header lines (`%PDF-X.Y` + optional binary comment) using `_find_header_end()` to determine a minimum valid object offset. Objects in the xref table whose offset is less than `_header_end` are considered corrupt (e.g. offset=0 pointing at the `%PDF-` header) and are skipped. The header boundary used for `header.bin` is `min(offset for valid InUse objects)`.
+| Byte | Encoded as |
+|---|---|
+| Printable ASCII `0x20–0x7E` (except `\`) | literal character |
+| `0x0D` (CR) | `\r` |
+| `0x0A` (LF) | `\n` |
+| `0x5C` (backslash) | `\\` |
+| All other bytes | `\xNN` (two lowercase hex digits) |
+
+#### Examples
+
+**Standard LF PDF with 4-byte binary comment:**
+```
+%PDF-1.7\n%\xe2\xe3\xcf\xd3\n
+```
+
+**CRLF PDF with 4-byte binary comment:**
+```
+%PDF-1.7\r\n%\xa1\xb3\xc5\xd7\r\n
+```
+
+**PDF with gap byte after binary comment (double LF):**
+```
+%PDF-1.7\n%\x81\x81\x81\x81\n\n
+```
+
+**PDF with single-byte binary comment:**
+```
+%PDF-1.5\n%\x8f\n
+```
+
+**PDF with space-prefixed binary comment:**
+```
+%PDF-1.4\n% \xe2\xe3\xcf\xd3\n
+```
+
+**PDF with CRLF and no binary comment:**
+```
+%PDF-1.4\r\n
+```
+
+(The trailing `\n` at the end of the file is the file-terminator, not part of the header data.)
+
+#### First-valid-object boundary
+
+The exporter computes `_header_end` by parsing the `%PDF-X.Y` version line and optional binary comment from `data[0:]`. Any InUse xref entry with `offset < _header_end` is skipped as corrupt (e.g. ghost entries at offset=0). The `header.txt` content covers `data[0 : _first_obj_offset]` where `_first_obj_offset = min(offset for valid InUse objects)`.
+
+#### Linker decoding
+
+The linker reads `header.txt`, strips the trailing file-level `\n`, then decodes the escape sequences:
+- `\r` → byte `0x0D`
+- `\n` → byte `0x0A`
+- `\\` → byte `0x5C`
+- `\xNN` → byte with hex value `NN`
+- Any other character → `latin-1` encode
+
+The result is written verbatim to the beginning of the output PDF.
 
 ---
 
-### 3.3 `header.txt` (legacy)
-
-Written by the exporter for human readability. Format:
-
-```
-%PDF-1.7
-%\xe2\xe3\xcf\xd3
-```
-
-Non-ASCII bytes in the binary comment line are stored as `\xNN` escape sequences (Python `repr` style). The linker uses `header.bin` when present. If only `header.txt` exists (older exports), the linker reconstructs bytes by parsing the escape sequences.
-
----
-
-### 3.4 `xref_raw.bin`
+### 3.3 `xref_raw.bin`
 
 **Present only for**: table-xref (`"xref_type": "table"`), non-linearized (`"linearized": false`) PDFs.
 
@@ -474,13 +514,20 @@ export_pdf(pdf_path, output_dir):
    d. For stream-xref: find which InUse object has offset == _startxref_val → _xref_stream_num
    e. Compute _header_end: parse '%PDF-X.Y' + optional binary comment line from data[0:]
    f. Build _valid_sorted_inuse: InUse objects sorted by offset, filtered to xe.offset >= _header_end
-   g. Compute _next_boundaries dict (maps object num → first byte after its pdfo zone):
+   g. Compute _first_obj_offset = _valid_sorted_inuse[0].offset (or _header_end if empty)
+   h. Compute _next_boundaries dict (maps object num → first byte after its pdfo zone):
       - For non-linearized, regular objects: boundary = next object's offset
       - For non-linearized, last regular object (table-xref): boundary = _startxref_val
       - For xref stream object: boundary = _sx_offset
       - For linearized PDFs: _next_boundaries is empty (fall back to _get_raw_object_bytes)
 
-3. Write header.txt (human-readable, with \xNN escapes for binary bytes)
+3. Write header.txt: encode data[0 : _first_obj_offset] as single escaped line
+   - CR (0x0D) → \r
+   - LF (0x0A) → \n
+   - Backslash (0x5C) → \\
+   - Printable ASCII (0x20-0x7E) → literal
+   - All other bytes → \xNN
+   - Append one LF as file-terminator
 
 4. For each InUse object (sorted by offset):
    a. Skip if xe.offset < _header_end (corrupt xref entry)
@@ -508,8 +555,8 @@ export_pdf(pdf_path, output_dir):
 
 7. Write xref.txt (informational)
 
-8. Write header.bin = data[0 : _valid_sorted_inuse[0].offset]
-                    (or data[0 : _header_end] if no valid objects)
+8. Write header.txt: encode data[0 : _first_obj_offset] as single escaped line
+   (CR→\r, LF→\n, backslash→\\, printable ASCII literal, other→\xNN; append LF file-terminator)
 
 9. Write xref_raw.bin = data[_startxref_val :]
    (only if xref_type=="table" and not linearized and startxref_val > 0)
@@ -541,8 +588,8 @@ link_pdf(pdfx_dir, output_path):
 
 3. Build ObjStm group map: objstm_groups[host_num] = [(index, member_num), ...]
 
-4. Open output BytesIO buffer, write header bytes from _read_header(pdfx_dir)
-   (_read_header uses header.bin if present, else reconstructs from header.txt)
+4. Open output BytesIO buffer
+   - Decode header.txt escape sequences → raw bytes → write to output
 
 5. Write InUse objects in byte_offset order:
    For each inuse_obj:
@@ -692,7 +739,7 @@ Without gap bytes, each gap would reduce the output file size by 1-2 bytes, shif
 
 ### Proof (unmodified non-linearized PDFs)
 
-1. `header.bin` contains the exact original bytes before the first object — output starts identically.
+1. `header.txt` is decoded to the exact original bytes before the first object — output starts identically.
 2. Each InUse object's `.pdfo` extends from its `byte_offset` to the next object's `byte_offset`, inclusive of gap bytes.
 3. Writing `.pdfo` files in `byte_offset` order places each object at its original position in the output stream.
 4. Since every object occupies exactly `byte_length` bytes (matching the original), all subsequent objects maintain their original offsets.

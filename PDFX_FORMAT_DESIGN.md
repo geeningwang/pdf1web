@@ -1,6 +1,6 @@
 # PDFX — PDF Export Format Design
 
-**Version**: 0.2  
+**Version**: 0.3  
 **Status**: Implementation Complete  
 **Scope**: Exporter, linker, binary-exact roundtrip, AI-modification workflow
 
@@ -77,8 +77,7 @@ A PDF file is byte-offset-sensitive: the cross-reference table (xref) maps objec
 │
 ├── pdfx_manifest.json          # Root index — required
 │
-├── header.bin                  # Verbatim pre-first-object bytes (exact original EOLs)
-├── header.txt                  # Human-readable header fallback (legacy; header.bin takes precedence)
+├── header.txt                  # Escaped-line encoding of the verbatim pre-first-object bytes
 │
 ├── xref_raw.bin                # Verbatim original xref+trailer section (table-xref, non-linearized only)
 ├── eof_tail.bin                # Verbatim 'startxref...%%EOF' section (stream-xref only)
@@ -186,18 +185,29 @@ Key fields per object entry:
 | `resource_file` | Path to the extracted binary resource file, if applicable |
 | `is_signature` | `true` if this is a digital signature object — linker refuses to re-serialize modified signatures |
 
-### 5.2 `header.bin` and `header.txt`
+### 5.2 `header.txt`
 
-`header.bin` contains the verbatim bytes of the original PDF from byte 0 up to (not including) the first valid object. This preserves exact EOL style (LF or CRLF), the binary comment line, and any whitespace between the header and the first object.
+`header.txt` contains the verbatim bytes of the original PDF from byte 0 up to (not including) the first valid object, encoded as a **single escaped line** followed by one LF file-terminator.
 
-`header.txt` is a human-readable fallback written for legacy compatibility:
+Encoding rules:
+
+| Byte | Encoded as |
+|---|---|
+| Printable ASCII `0x20–0x7E` (except `\`) | literal character |
+| `0x0D` (CR) | `\r` |
+| `0x0A` (LF) | `\n` |
+| `0x5C` (backslash) | `\\` |
+| All other bytes | `\xNN` (two hex digits) |
+
+**Example** — CRLF PDF with binary comment:
 ```
-%PDF-1.7
-%\xe2\xe3\xcf\xd3
+%PDF-1.7\r\n%\xa1\xb3\xc5\xd7\r\n
 ```
-The linker uses `header.bin` when present; falls back to reconstructing bytes from `header.txt` for older exports.
+(The trailing newline in the file is the file-terminator, not part of the header data.)
 
-**Edge case**: PDFs with corrupt xref entries pointing to offset 0 would cause `min(in_use_offsets) == 0`, making `header.bin` empty. The exporter detects the true header end by parsing the `%PDF-X.Y` version line and optional binary comment, and uses that to filter out objects at implausible offsets before computing the header boundary.
+This format preserves exact EOL style (LF or CRLF), unusual binary comment variants (single-byte, space-prefixed), and any gap bytes between the binary comment and the first object.
+
+**Header boundary**: The exporter computes `_header_end` by parsing the `%PDF-X.Y` line and optional binary comment from the raw bytes. xref entries with `offset < _header_end` are filtered out as corrupt (e.g. offset=0 pointing at the `%PDF-` header). The header boundary written to `header.txt` is `min(offset for valid InUse objects)`, which may include gap bytes after the binary comment.
 
 ### 5.3 Object source files: `obj_NNNNN_G.pdfjson`
 
@@ -396,7 +406,7 @@ Informational only — not used by the compiler (which recomputes xref fresh fro
 ```
 function export(pdf_path, output_dir):
   1. Parse PDF: read header, enumerate all objects via xref
-  2. Write header.txt
+  2. Compute `_first_obj_offset = min(valid InUse offsets)`. Encode `data[0:_first_obj_offset]` as single escaped line → write `header.txt`.
   3. For each object (num, gen):
      a. Extract raw bytes → write objects/obj_NNNNN_G.pdfo   (the object file — like gcc -c)
      b. Parse object dict/value → serialize as JSON → write objects/obj_NNNNN_G.pdfjson   (the source)
@@ -426,7 +436,7 @@ The xref stream is an object like any other. Its `.pdfo` file preserves it exact
 ```
 function link(export_dir, output_pdf):        # analogous to: ld *.pdfo -o program
   1. Read pdfx_manifest.json
-  2. Write header bytes (from header.txt, re-encoding binary comment line)
+  2. Decode `header.txt` escape sequences → raw bytes → write to output
   3. For each object (in original byte_offset order, skipping ObjStm-contained objects):
      a. Check if modified:
         - compare sha256(obj_NNNNN_G.pdfjson) vs src_sha256 in manifest
