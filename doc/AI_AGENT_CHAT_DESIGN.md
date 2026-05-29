@@ -507,28 +507,75 @@ No third-party LLM SDK dependencies — uses `httpx` (already available via `fas
 
 ## 9. Phased Implementation Plan
 
-### Phase 1 — Backend Agent (no UI changes)
-1. `llm_config.py` — config loading from env/file
-2. `llm_client.py` — async `httpx` call, OpenAI-compatible, Anthropic adapter
-3. `agentService.py` — async-generator `chat()`: context gathering, inner loop (multi-round LLM calls, validation, retry), relink, yield `AgentEvent` per step
-4. `GET /api/agent/chat` SSE endpoint in `main.py` — iterates the generator and forwards events
-5. `GET /api/agent/config` endpoint
-6. `GET /api/agent/download/...` endpoint
-7. Test: hit `/api/agent/chat` with a real content stream + mock LLM that returns a bad response on round 1, good on round 2 — verify all SSE steps arrive
+### ✓ Completed
+
+| Item | Commit |
+|------|--------|
+| Custom PDF parser — reader, tokenizer, objects, xref | `e5d4949` |
+| PDFX exporter + linker — binary-exact roundtrip for all non-linearized PDFs | `e5d4949` |
+| `header.txt` single-line escaped format (CRLF / binary byte safe) | `47bd455` |
+| `GET /api/export/{upload_id}` — zip PDFX dir for download | `8a76b44` |
+| `POST /api/link` — accept PDFX zip, reconstruct PDF (zip-slip protected) | `8a76b44` |
+| Design docs: `PDFX_FORMAT_DESIGN.md`, `PDFX_FORMAT_REFERENCE.md`, `AI_AGENT_CHAT_DESIGN.md` | `45de116` |
+
+---
+
+### Phase 1 — Backend Agent
+
+> **Goal**: working SSE agent endpoint; no frontend changes required yet. Can be tested with `curl`.
+
+1. `backend/pdf/llm_config.py`
+   - Load provider/model/api_key/base_url from env vars (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`) with fallback to `backend/llm_config.json` (gitignored)
+   - Expose `get_llm_config() -> LLMConfig`
+
+2. `backend/pdf/llm_client.py`
+   - Async `httpx` call to `/v1/chat/completions` (OpenAI-compatible)
+   - Anthropic adapter: converts request to Anthropic Messages API format, converts response back
+   - `async def complete(messages, config) -> str`
+
+3. `backend/pdf/agent_service.py`
+   - `AgentEvent` dataclass (`event: str`, `data: dict`)
+   - `async def chat(...) -> AsyncGenerator[AgentEvent, None]`
+   - Inner loop: `build_messages` → `call_llm` → `parse_response` → `validate` → retry on failure (up to `MAX_ROUNDS = 3`)
+   - On success: `relink_pdf`, update `AgentSession`, yield `done`
+   - On exhausted rounds: yield `error`
+
+4. `main.py` additions
+   - `GET /api/agent/chat` — `StreamingResponse` with `text/event-stream`, iterates `agent_service.chat()`, formats each `AgentEvent` as `event: ...\ndata: ...\n\n`
+   - `GET /api/agent/config` — returns `{providers: [...], models: {...}}` from `llm_config.py`
+   - `GET /api/agent/download/{upload_id}/{obj_num}/{obj_gen}/modified.pdf` — serves the last linked PDF from `AgentSession`
+
+5. Manual test: `curl -N "http://localhost:8000/api/agent/chat?upload_id=...&obj_num=4&obj_gen=0&message=move+heading+down+30pt"` — confirm all SSE steps appear including retry on a bad LLM response
+
+---
 
 ### Phase 2 — Frontend Chat Pane
-1. Add `AiChatPane.tsx`:
-   - `EventSource` SSE consumer
-   - Per-turn step timeline (thinking → llm_request → llm_response → validation → retry → …)
-   - Steps auto-collapse on `done` event
-   - Final reply + diff view (`diff` npm package)
-   - Download button
-2. Add "Open AI Chat" toggle button to `ContentStreamPane.tsx`
-3. Wire `App.tsx` to show the three-pane layout when AI pane is open
-4. Add provider/model selector (populated from `GET /api/agent/config`)
+
+> **Goal**: right-side chat pane that shows the step timeline in real time and a diff after each turn.
+
+1. `frontend/src/components/AiChatPane.tsx`
+   - Open `EventSource` on send; append `AgentStep` items to the current turn as events arrive
+   - Step timeline: icon + text per step type; LLM response detail collapsible
+   - Steps auto-collapse when `done` event fires; show final reply + diff
+   - Download button (link to `download_url` from `done` payload)
+   - Error state when `error` event fires
+
+2. `frontend/src/components/ContentStreamPane.tsx`
+   - Add "✦ AI Edit" toggle button in the pane header
+   - Pass `uploadId`, `objNum`, `objGen`, `currentPdfs` up to the parent (or via context)
+
+3. `frontend/src/App.tsx`
+   - Three-pane layout when AI pane is open: tree | content stream | AI chat
+   - Use existing `react-resizable-panels`
+
+4. Provider/model selector in `AiChatPane.tsx`
+   - `GET /api/agent/config` on mount → populate `<select>` for provider and model
+
+---
 
 ### Phase 3 — Polish
-1. "Undo" button — revert to previous `.pdfs` using `pdfs_history` in `AgentSession`
-2. Canvas preview auto-refresh after successful edit
-3. Expand/collapse individual LLM response details in the step timeline
-4. Show token usage / latency per round in the step timeline
+
+1. **Undo** — "↩ Undo last edit" button; calls new `POST /api/agent/undo/{upload_id}` which pops `pdfs_history`, re-links, returns new `download_url`
+2. **Canvas refresh** — after `done` event fires, trigger re-render of the content stream canvas pane
+3. **Expandable LLM responses** — toggle raw LLM text inline in the step timeline
+4. **Token / latency display** — show `prompt_tokens`, `completion_tokens`, and round latency per `llm_response` step (populated from LLM response metadata)
