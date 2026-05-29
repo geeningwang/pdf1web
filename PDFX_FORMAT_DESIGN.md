@@ -1,8 +1,10 @@
 # PDFX — PDF Export Format Design
 
-**Version**: 0.1 Draft  
-**Status**: For Review  
-**Scope**: Exporter, compiler, binary-exact roundtrip, AI-modification workflow
+**Version**: 0.2  
+**Status**: Implementation Complete  
+**Scope**: Exporter, linker, binary-exact roundtrip, AI-modification workflow
+
+**Implementation status** (360-PDF stress test, May 2026): 278 binary-exact matches, 82 linearized PDFs (valid de-linearized output), 0 errors.
 
 ---
 
@@ -75,26 +77,31 @@ A PDF file is byte-offset-sensitive: the cross-reference table (xref) maps objec
 │
 ├── pdfx_manifest.json          # Root index — required
 │
-├── header.txt                  # PDF header line(s) e.g. %PDF-1.7 + binary comment
+├── header.bin                  # Verbatim pre-first-object bytes (exact original EOLs)
+├── header.txt                  # Human-readable header fallback (legacy; header.bin takes precedence)
+│
+├── xref_raw.bin                # Verbatim original xref+trailer section (table-xref, non-linearized only)
+├── eof_tail.bin                # Verbatim 'startxref...%%EOF' section (stream-xref only)
 │
 ├── objects/
-│   ├── obj_0005_0.pdfjson         # Source: AI-editable JSON dict (like .c)
+│   ├── obj_0005_0.pdfjson      # Source: AI-editable JSON dict (like .c)
 │   ├── obj_0005_0.pdfo         # Object file: verbatim bytes from the original PDF (like .o)
+│   │                           #   — extends to next object boundary (includes gap bytes)
 │   │
-│   ├── obj_0045_0.pdfjson         # JSON dict for object 45 (page content stream)
+│   ├── obj_0045_0.pdfjson      # JSON dict for object 45 (page content stream)
 │   ├── obj_0045_0.pdfo         # Object file for object 45
-│   ├── obj_0045_0.pdfs        # Decoded stream content — PDF operators, AI-editable (like .s)
+│   ├── obj_0045_0.pdfs         # Decoded stream content — PDF operators, AI-editable (like .s)
 │   │
-│   ├── obj_0066_0.pdfjson         # JSON dict for object 66 (font stream)
+│   ├── obj_0066_0.pdfjson      # JSON dict for object 66 (font stream)
 │   ├── obj_0066_0.pdfo         # Object file for object 66
 │   └── obj_0066_0.stream.bin   # Decoded binary stream payload (font program)
 │
 ├── resources/
-│   ├── font_0066_0.ttf         # Extracted font file (human-readable name if possible)
+│   ├── font_0066_0.ttf         # Extracted font file
 │   └── image_0063_0.jpg        # Extracted image (original compressed bytes)
 │
 ├── xref.txt                    # Human-readable xref table summary (informational only)
-└── trailer.pdfjson                # Trailer dictionary (semantic form)
+└── trailer.pdfjson              # Trailer dictionary (semantic form)
 ```
 
 **Naming convention**: `obj_{NNNNN}_{G}` where NNNNN is the object number zero-padded to 5 digits and G is the generation number. Zero-padding makes directory listings sort in object-number order.
@@ -179,14 +186,18 @@ Key fields per object entry:
 | `resource_file` | Path to the extracted binary resource file, if applicable |
 | `is_signature` | `true` if this is a digital signature object — linker refuses to re-serialize modified signatures |
 
-### 5.2 `header.txt`
+### 5.2 `header.bin` and `header.txt`
 
+`header.bin` contains the verbatim bytes of the original PDF from byte 0 up to (not including) the first valid object. This preserves exact EOL style (LF or CRLF), the binary comment line, and any whitespace between the header and the first object.
+
+`header.txt` is a human-readable fallback written for legacy compatibility:
 ```
 %PDF-1.7
-%âãÏÓ
+%\xe2\xe3\xcf\xd3
 ```
+The linker uses `header.bin` when present; falls back to reconstructing bytes from `header.txt` for older exports.
 
-The second line (binary comment) is stored as UTF-8 escaped bytes: `%\xe2\xe3\xcf\xd3`. The compiler re-encodes it to exact bytes.
+**Edge case**: PDFs with corrupt xref entries pointing to offset 0 would cause `min(in_use_offsets) == 0`, making `header.bin` empty. The exporter detects the true header end by parsing the `%PDF-X.Y` version line and optional binary comment, and uses that to filter out objects at implausible offsets before computing the header boundary.
 
 ### 5.3 Object source files: `obj_NNNNN_G.pdfjson`
 
@@ -452,13 +463,11 @@ function link(export_dir, output_pdf):        # analogous to: ld *.pdfo -o progr
 
 ### 8.1 Linearized PDFs
 
-Linearized PDFs have a special first-page hint stream (object 1, plus a Linearization dictionary). The linearization structure depends on byte offsets throughout the file. 
+Linearized PDFs place the xref section near the beginning of the file, before most content objects. The linearization hint stream encodes byte offsets throughout the file. Reconstructing a byte-identical linearized PDF requires a two-pass linker that measures offsets in pass 1 and rewrites the hint stream in pass 2.
 
-**Decision**: Preserve linearization. The exporter records all linearization parameters in the manifest. The linker uses a two-pass strategy:
-- Pass 1: write all objects, measure actual byte offsets.
-- Pass 2: rewrite the Linearization dictionary and hint stream with the measured offsets.
+**Current decision**: De-linearize on export. The exporter detects linearized PDFs by checking whether any InUse object has a byte offset greater than the `startxref` value (which indicates objects exist after the xref section). When `"linearized": true` is in the manifest, the linker always uses the modified path — it writes objects in object-number order, builds a fresh xref table at the end, and produces a valid non-linearized PDF.
 
-The manifest records `"linearized": true` so the linker automatically selects the two-pass path. Binary-exact output is guaranteed for unmodified linearized PDFs.
+Linearized PDFs account for 82 of 360 test PDFs (23%). These produce valid output but not byte-identical output. Binary-exact roundtrip for linearized PDFs (two-pass) is deferred to a future version.
 
 ### 8.2 Encrypted PDFs
 
@@ -546,4 +555,8 @@ Out of scope for v1: linearization preservation, encryption round-trip, object s
 
 4. **Source file format — JSON**: `.pdfjson` files use JSON. AI agents produce JSON reliably via structured output modes, JSON Schema can validate AI output before it reaches the linker, and parsing is unambiguous. PDF-specific types use simple string conventions (`"/Name"`, `"N G R"`) that LLMs handle well without special training.
 
-5. **Binary-exact scope**: Encrypted PDFs are out of scope. Linearized PDFs (two-pass linker) and compressed object streams (ObjStm re-packing) are handled correctly. The binary-exact guarantee applies to all standard non-encrypted PDFs.
+5. **Binary-exact scope**: Encrypted PDFs are out of scope. Linearized PDFs produce valid de-linearized output (not binary-exact). Compressed object streams (ObjStm re-packing) are handled correctly for binary-exact output. The binary-exact guarantee applies to all non-encrypted, non-linearized PDFs with either table-xref or stream-xref.
+
+6. **xref type detection**: xref type (`"table"` vs `"stream"`) is determined by inspecting the bytes at `startxref_val` in the original PDF data — if the bytes start with `xref`, it is a table-xref; otherwise it is a stream-xref object. This is more reliable than checking for the presence of ObjStm compressed entries (a PDF 1.5 stream-xref file may contain no ObjStm objects).
+
+7. **`.pdfo` byte range includes gap bytes**: Each object's `.pdfo` file extends from the object's byte offset to the next object's offset (or the xref start for the last object), capturing any inter-object whitespace. For the xref stream object the boundary is the `startxref` keyword position. The manifest's `byte_length` reflects this extended range. This is essential for binary-exact roundtrip — objects written verbatim from `.pdfo` must land at their original offsets, so the gap bytes must be included.
