@@ -28,8 +28,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 async def _complete_openai(messages: list[dict], cfg: LLMConfig) -> str:
-    """POST to /v1/chat/completions (OpenAI shape)."""
-    url = f"{cfg.base_url}/v1/chat/completions"
+    """POST to {base_url}/chat/completions (OpenAI shape).
+
+    base_url is expected to already include the version prefix, e.g.
+    https://api.openai.com/v1 or https://api.moonshot.cn/v1.
+    """
+    url = f"{cfg.base_url}/chat/completions"
     payload = {
         "model": cfg.model,
         "messages": messages,
