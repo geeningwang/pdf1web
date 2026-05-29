@@ -39,11 +39,19 @@ KNOWN_PROVIDERS: dict[str, dict] = {
         "style": "anthropic",
     },
     "kimi": {
-        "name": "Kimi (Moonshot AI)",
+        "name": "Kimi (Moonshot AI Open Platform)",
         "base_url": "https://api.moonshot.cn/v1",
         "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
         "default_model": "moonshot-v1-8k",
         "style": "openai",          # Kimi is OpenAI-compatible
+    },
+    "kimi_code": {
+        "name": "Kimi Code (Subscription)",
+        "base_url": "https://api.kimi.com/coding/v1",
+        "models": ["kimi-for-coding"],
+        "default_model": "kimi-for-coding",
+        "style": "openai",          # OpenAI-compatible endpoint
+        "user_agent": "claude-code/1.0",  # required to pass Kimi Code's agent check
     },
     "custom": {
         "name": "Custom (OpenAI-compatible)",
@@ -64,6 +72,7 @@ class LLMConfig:
     model: str
     max_tokens: int = 4096
     timeout: int = 60
+    user_agent: str = ""   # optional override for User-Agent header
 
 
 @dataclass
@@ -147,6 +156,8 @@ def get_llm_config(provider: str | None = None, model: str | None = None) -> LLM
             "Set LLM_API_KEY env var or add it to backend/llm_config.json."
         )
 
+    user_agent = meta.get("user_agent", "")
+
     return LLMConfig(
         provider=provider,
         style=meta.get("style", "openai"),
@@ -155,6 +166,7 @@ def get_llm_config(provider: str | None = None, model: str | None = None) -> LLM
         model=model,
         max_tokens=max_tokens,
         timeout=timeout,
+        user_agent=user_agent,
     )
 
 

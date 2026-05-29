@@ -43,6 +43,8 @@ async def _complete_openai(messages: list[dict], cfg: LLMConfig) -> str:
         "Authorization": f"Bearer {cfg.api_key}",
         "Content-Type": "application/json",
     }
+    if cfg.user_agent:
+        headers["User-Agent"] = cfg.user_agent
     timeout = aiohttp.ClientTimeout(total=cfg.timeout)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.post(url, json=payload, headers=headers) as resp:
