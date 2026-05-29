@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 
-import aiohttp
+import httpx
 
 from .llm_config import LLMConfig
 
@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 async def _complete_openai(messages: list[dict], cfg: LLMConfig) -> tuple[str, dict]:
     """POST to {base_url}/chat/completions with stream=true (OpenAI shape).
 
-    Streaming is used so that reasoning-model "think" time does not trigger
-    a socket read timeout — each token chunk keeps the socket alive.
+    Uses httpx.AsyncClient which integrates cleanly with uvicorn/asyncio —
+    no aiohttp TimerContext/CancelledError conversion issues.
 
     Returns (content_text, debug_info).
     """
@@ -51,8 +51,9 @@ async def _complete_openai(messages: list[dict], cfg: LLMConfig) -> tuple[str, d
     if cfg.user_agent:
         req_headers["User-Agent"] = cfg.user_agent
 
-    # Large total timeout; stream keeps socket alive so individual reads are fast
-    timeout = aiohttp.ClientTimeout(sock_connect=15, total=cfg.timeout)
+    # connect=15s, read=None (each SSE chunk resets read; no per-read limit),
+    # pool=5s, write=30s.  cfg.timeout is the total wall-clock limit.
+    timeout = httpx.Timeout(connect=15, read=None, write=30, pool=5)
     t0 = time.monotonic()
 
     content_parts: list[str] = []
@@ -60,25 +61,26 @@ async def _complete_openai(messages: list[dict], cfg: LLMConfig) -> tuple[str, d
     finish_reason = "?"
     usage: dict = {}
 
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(url, json=payload, headers=req_headers) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        async with client.stream("POST", url, json=payload, headers=req_headers) as resp:
+            if resp.status_code != 200:
+                error_text = await resp.aread()
+                error_str = error_text.decode("utf-8", errors="replace")
                 elapsed = time.monotonic() - t0
                 debug = {
                     "url": url, "model": cfg.model,
                     "prompt_chars": prompt_chars,
                     "elapsed": f"{elapsed:.1f}s",
-                    "http_status": resp.status,
-                    "raw_response": error_text[:1000],
+                    "http_status": resp.status_code,
+                    "raw_response": error_str[:1000],
                 }
                 raise RuntimeError(
-                    f"LLM API error {resp.status}: {error_text[:500]}\n\n"
+                    f"LLM API error {resp.status_code}: {error_str[:500]}\n\n"
                     f"DEBUG: {json.dumps(debug, indent=2)}"
                 )
 
-            async for raw_line in resp.content:
-                line = raw_line.decode("utf-8").strip()
+            async for line in resp.aiter_lines():
+                line = line.strip()
                 if not line.startswith("data:"):
                     continue
                 data = line[5:].strip()
@@ -106,7 +108,7 @@ async def _complete_openai(messages: list[dict], cfg: LLMConfig) -> tuple[str, d
     debug_info = {
         "url": url,
         "model": cfg.model,
-        "timeout_setting": f"total={cfg.timeout}s (streaming)",
+        "timeout_setting": f"connect=15 read=None total_wall={cfg.timeout}s",
         "elapsed": f"{elapsed:.1f}s",
         "prompt_chars": prompt_chars,
         "finish_reason": finish_reason,
