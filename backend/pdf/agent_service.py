@@ -488,17 +488,33 @@ async def chat(
             history, user_message, prior_errors,
         )
 
+        prompt_chars = sum(len(m.get("content", "")) for m in messages)
         yield _step("llm_request", round=round_num,
-                    text=f"Sending request to LLM (round {round_num})")
+                    text=f"Sending request to LLM (round {round_num})",
+                    detail=(
+                        f"provider: {cfg.provider}  model: {cfg.model}\n"
+                        f"base_url: {cfg.base_url}\n"
+                        f"max_tokens: {cfg.max_tokens}  timeout: {cfg.timeout}s\n"
+                        f"messages: {len(messages)}  prompt_chars: {prompt_chars}"
+                    ))
 
         try:
-            llm_text = await llm_complete(messages, cfg)
+            llm_text, debug_info = await llm_complete(messages, cfg)
         except Exception as exc:
-            yield _error(f"LLM call failed: {type(exc).__name__}: {exc}")
+            import traceback
+            yield _error(
+                f"LLM call failed: {type(exc).__name__}: {exc}\n\n"
+                f"Traceback:\n{traceback.format_exc()}"
+            )
             return
 
         yield _step("llm_response", round=round_num,
-                    text="Response received",
+                    text=(
+                        f"Response received — "
+                        f"{debug_info.get('elapsed','?')}  "
+                        f"finish={debug_info.get('finish_reason','?')}  "
+                        f"usage={debug_info.get('usage',{})}"
+                    ),
                     detail=llm_text)
 
         new_pdfs, explanation = _parse_response(llm_text)
