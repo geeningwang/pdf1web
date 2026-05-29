@@ -55,7 +55,13 @@ async def _complete_openai(messages: list[dict], cfg: LLMConfig) -> str:
                 )
             body = json.loads(text)
     try:
-        return body["choices"][0]["message"]["content"]
+        msg = body["choices"][0]["message"]
+        # Some reasoning models (e.g. kimi-for-coding) return the answer in
+        # reasoning_content when content is empty.
+        content = msg.get("content") or msg.get("reasoning_content") or ""
+        if not content:
+            raise RuntimeError(f"LLM returned empty content. Full response: {body}")
+        return content
     except (KeyError, IndexError) as exc:
         raise RuntimeError(f"Unexpected LLM response shape: {body}") from exc
 

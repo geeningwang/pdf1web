@@ -494,7 +494,7 @@ async def chat(
         try:
             llm_text = await llm_complete(messages, cfg)
         except Exception as exc:
-            yield _error(f"LLM call failed: {exc}")
+            yield _error(f"LLM call failed: {type(exc).__name__}: {exc}")
             return
 
         yield _step("llm_response", round=round_num,
