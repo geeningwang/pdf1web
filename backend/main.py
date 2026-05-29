@@ -490,6 +490,126 @@ def open_from_store(filename: str) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# PDFX export / link endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/export/{upload_id}")
+def export_upload(upload_id: str) -> Response:
+    """Export a previously uploaded PDF as a PDFX zip archive.
+
+    The upload must have been created by POST /api/upload.  The PDFX directory
+    is written to a temporary location, zipped in-memory, and returned as
+    application/zip.
+    """
+    import shutil
+    import tempfile
+    import zipfile
+    from pdf.exporter import export_pdf
+
+    # Locate the persisted PDF under uploads/<upload_id>/
+    upload_dir = _UPLOADS_DIR / upload_id
+    if not upload_dir.exists():
+        raise HTTPException(404, f"Upload '{upload_id}' not found")
+
+    pdf_files = [f for f in upload_dir.iterdir() if f.suffix.lower() == ".pdf"]
+    if not pdf_files:
+        raise HTTPException(404, f"No PDF found for upload '{upload_id}'")
+    pdf_path = pdf_files[0]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        try:
+            pdfx_dir = export_pdf(str(pdf_path), tmp)
+        except Exception as exc:
+            raise HTTPException(500, f"Export failed: {exc}") from exc
+
+        # Zip the pdfx directory
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for file in sorted(pdfx_dir.rglob("*")):
+                if file.is_file():
+                    zf.write(file, file.relative_to(tmp_path))
+        zip_bytes = buf.getvalue()
+
+    stem = pdf_path.stem
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{stem}.pdfx.zip"'},
+    )
+
+
+@app.post("/api/link")
+async def link_pdfx(file: UploadFile = File(...)) -> Response:
+    """Accept a PDFX zip archive and return the linked PDF.
+
+    The zip must contain a single top-level directory (the .pdfx directory)
+    with a valid pdfx_manifest.json.  Returns the reconstructed PDF as
+    application/pdf.
+    """
+    import shutil
+    import tempfile
+    import zipfile
+    from pdf.linker import link_pdf
+
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(400, "Expected a .zip file containing a PDFX directory")
+
+    data = await file.read()
+    if len(data) < 4:
+        raise HTTPException(400, "File too small")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+
+        # Extract zip
+        try:
+            buf = io.BytesIO(data)
+            with zipfile.ZipFile(buf, "r") as zf:
+                # Security: reject absolute paths and path traversal entries
+                for member in zf.namelist():
+                    member_path = Path(member)
+                    if member_path.is_absolute() or ".." in member_path.parts:
+                        raise HTTPException(400, f"Unsafe path in zip: {member}")
+                zf.extractall(tmp_path)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(400, f"Failed to unzip: {exc}") from exc
+
+        # Find the pdfx directory (first subdir containing pdfx_manifest.json)
+        pdfx_dir: Path | None = None
+        for candidate in sorted(tmp_path.iterdir()):
+            if candidate.is_dir() and (candidate / "pdfx_manifest.json").exists():
+                pdfx_dir = candidate
+                break
+        if pdfx_dir is None:
+            # Also check root level
+            if (tmp_path / "pdfx_manifest.json").exists():
+                pdfx_dir = tmp_path
+        if pdfx_dir is None:
+            raise HTTPException(400, "No pdfx_manifest.json found in zip")
+
+        out_path = tmp_path / "_linked.pdf"
+        try:
+            link_pdf(pdfx_dir, out_path)
+        except Exception as exc:
+            raise HTTPException(500, f"Link failed: {exc}") from exc
+
+        pdf_bytes = out_path.read_bytes()
+
+    # Derive output filename from zip name
+    stem = Path(file.filename).stem
+    if stem.endswith(".pdfx"):
+        stem = stem[:-5]
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{stem}.pdf"'},
+    )
+
+
 @app.get("/api/object/{upload_id}/{num}/{gen}")
 def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     """Return the detailed text for a specific PDF object (lazy load)."""
