@@ -283,14 +283,9 @@ def export_pdf(pdf_path: str | Path, output_dir: str | Path) -> Path:
     xref = doc._xref
 
     # ── Header ────────────────────────────────────────────────────────────
-    header_lines: list[str] = [f"%PDF-{doc._version}"]
-    if doc._binary_marker is not None:
-        # Store non-ASCII bytes as \xNN escape sequences so the file stays UTF-8
-        escaped = "%" + "".join(f"\\x{b:02x}" for b in doc._binary_marker)
-        header_lines.append(escaped)
-    (pdfx_dir / "header.txt").write_text(
-        "\n".join(header_lines) + "\n", encoding="utf-8"
-    )
+    # header.txt is written later (after _first_obj_offset is computed) using
+    # the raw bytes encoding that preserves CRLF, gap bytes, and unusual
+    # binary comment formats exactly.
 
     # ── Separate InUse and Compressed entries ─────────────────────────────
     in_use = {
@@ -610,7 +605,25 @@ def export_pdf(pdf_path: str | Path, output_dir: str | Path) -> Path:
     # Use the first valid object's offset (min of _valid_sorted_inuse offsets)
     # rather than _header_end, which is only used to filter corrupt xref entries.
     _first_obj_offset = _valid_sorted_inuse[0][1].offset if _valid_sorted_inuse else _header_end
-    (pdfx_dir / "header.bin").write_bytes(data[:_first_obj_offset])
+
+    # Write header.txt: raw header bytes encoded as a single escaped line.
+    # All control characters (\r, \n) and non-ASCII bytes are escaped so the
+    # full byte sequence can be reconstructed exactly by the linker.
+    # Format: printable ASCII kept literal; \r→\r, \n→\n, \→\\, else \xNN.
+    _raw_hdr = data[:_first_obj_offset]
+    _encoded_hdr: list[str] = []
+    for _b in _raw_hdr:
+        if _b == 0x0D:
+            _encoded_hdr.append("\\r")
+        elif _b == 0x0A:
+            _encoded_hdr.append("\\n")
+        elif _b == 0x5C:
+            _encoded_hdr.append("\\\\")
+        elif 0x20 <= _b <= 0x7E:
+            _encoded_hdr.append(chr(_b))
+        else:
+            _encoded_hdr.append(f"\\x{_b:02x}")
+    (pdfx_dir / "header.txt").write_text("".join(_encoded_hdr) + "\n", encoding="utf-8")
 
     if xref_type_str == "table" and not is_linearized and startxref_val > 0 and startxref_val < len(data):
         (pdfx_dir / "xref_raw.bin").write_bytes(data[startxref_val:])

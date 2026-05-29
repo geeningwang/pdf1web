@@ -58,41 +58,43 @@ def _is_obj_modified(pdfx_dir: Path, entry: dict) -> bool:
 # ── Header ────────────────────────────────────────────────────────────────────
 
 def _read_header(pdfx_dir: Path) -> bytes:
-    """Return verbatim header bytes (bytes before the first object).
-
-    Uses ``header.bin`` when present (exact original bytes).  Falls back to
-    reconstructing from ``header.txt`` for PDFX exports created before
-    ``header.bin`` was introduced.
-    """
-    header_bin = pdfx_dir / "header.bin"
-    if header_bin.exists():
-        return header_bin.read_bytes()
+    """Reconstruct PDF header bytes from header.txt."""
     return _parse_header(pdfx_dir / "header.txt")
 
 
 def _parse_header(header_path: Path) -> bytes:
-    """Reconstruct raw PDF header bytes from the header.txt file.
+    """Reconstruct raw PDF header bytes from header.txt.
 
-    header.txt uses ``\\xNN`` escape sequences for non-ASCII bytes in the
-    binary-comment line (e.g. ``%\\xbf\\xf7\\xa2\\xfe``).
+    header.txt stores the raw header as a single escaped line:
+      - Printable ASCII (0x20-0x7E, except backslash) kept literal
+      - \\r  → CR (0x0D)
+      - \\n  → LF (0x0A)
+      - \\\\ → backslash (0x5C)
+      - \\xNN → byte with hex value NN
     """
-    out = io.BytesIO()
-    for line in header_path.read_text(encoding="utf-8").splitlines():
-        if "\\x" in line:
-            raw = bytearray()
-            i = 0
-            while i < len(line):
-                if line[i : i + 2] == "\\x" and i + 3 < len(line):
-                    raw.append(int(line[i + 2 : i + 4], 16))
-                    i += 4
-                else:
-                    raw.extend(line[i].encode("latin-1"))
-                    i += 1
-            out.write(bytes(raw))
+    line = header_path.read_text(encoding="utf-8")
+    # Strip exactly one trailing newline (the file terminator)
+    if line.endswith("\n"):
+        line = line[:-1]
+    out = bytearray()
+    i = 0
+    while i < len(line):
+        if line[i] == "\\" and i + 1 < len(line):
+            c = line[i + 1]
+            if c == "r":
+                out.append(0x0D); i += 2
+            elif c == "n":
+                out.append(0x0A); i += 2
+            elif c == "\\":
+                out.append(0x5C); i += 2
+            elif c == "x" and i + 3 < len(line):
+                out.append(int(line[i + 2 : i + 4], 16)); i += 4
+            else:
+                out.extend(line[i].encode("latin-1")); i += 1
         else:
-            out.write(line.encode("latin-1"))
-        out.write(b"\n")
-    return out.getvalue()
+            out.extend(line[i].encode("latin-1"))
+            i += 1
+    return bytes(out)
 
 
 # ── JSON → PDF serialization ──────────────────────────────────────────────────
