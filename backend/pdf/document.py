@@ -418,6 +418,7 @@ class PdfDocument:
         self._binary_marker: bytes | None = None
         self._file_path: str = ""
         self._object_cache: dict[int, PdfObject] = {}
+        self._resolving: set[int] = set()  # cycle guard for _resolve_compressed
         self._root: PdfNode | None = None
         self._palette_nums: frozenset[int] = frozenset()
 
@@ -527,7 +528,16 @@ class PdfDocument:
 
     def _resolve_compressed(self, num: int, xe: XrefEntry) -> PdfObject | None:
         """Resolve an object stored inside an object stream."""
-        stm_obj = self.resolve_num(int(xe.offset))
+        host_num = int(xe.offset)
+        if host_num in self._resolving:
+            # Cycle detected: ObjStm host references itself or another ObjStm
+            # that is already being resolved.  Return None to break the loop.
+            return None
+        self._resolving.add(host_num)
+        try:
+            stm_obj = self.resolve_num(host_num)
+        finally:
+            self._resolving.discard(host_num)
         if stm_obj is None or stm_obj.type != PdfObjType.Stream:
             return None
 
