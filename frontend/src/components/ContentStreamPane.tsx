@@ -82,9 +82,13 @@ function CategorySummary({ counts }: { counts: Record<string, number> }) {
 interface Props {
   data: ContentStreamData
   uploadId?: string
+  objNum?: number
+  objGen?: number
+  aiChatOpen?: boolean
+  onToggleAiChat?: () => void
 }
 
-const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
+const ContentStreamPane: React.FC<Props> = ({ data, uploadId, aiChatOpen, onToggleAiChat }) => {
   const displayed = data.operations
   const canRender = !!uploadId && !!data.media_box
   const hasInvisibleText = data.operations.some(
@@ -108,6 +112,16 @@ const ContentStreamPane: React.FC<Props> = ({ data, uploadId }) => {
             · {data.total_ops.toLocaleString()} operator{data.total_ops !== 1 ? 's' : ''}
             {data.truncated ? ` (parsed first ${data.operations.length.toLocaleString()})` : ''}
           </span>
+          {onToggleAiChat && (
+            <button
+              className={`cs-render-toggle${aiChatOpen ? ' active' : ''}`}
+              onClick={onToggleAiChat}
+              title="Open AI chat to edit this content stream"
+              style={{ marginLeft: '8px' }}
+            >
+              ✦ AI Edit
+            </button>
+          )}
           {canRender && (
             <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px', alignItems: 'center' }}>
               <button

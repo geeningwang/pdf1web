@@ -5,6 +5,7 @@ import { fetchObjectDetail, fetchIccProfile, fetchImageDetail, fetchContentStrea
 import IccPane from './IccPane'
 import ImagePane from './ImagePane'
 import ContentStreamPane from './ContentStreamPane'
+import AiChatPane from './AiChatPane'
 import PalettePane from './PalettePane'
 import ToUnicodePane from './ToUnicodePane'
 import FontDescriptorPane from './FontDescriptorPane'
@@ -73,6 +74,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
   const [hintStreamData, setHintStreamData] = useState<HintStreamData | null>(null)
   const [backRefs, setBackRefs] = useState<BackRefsData | null>(null)
   const [typeLabel, setTypeLabel] = useState<string | null>(null)
+  const [aiChatOpen, setAiChatOpen] = useState(false)
 
   useEffect(() => {
     if (!node) {
@@ -90,6 +92,7 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
     setIccData(null)
     setImageDetail(null)
     setContentStreamData(null)
+    setAiChatOpen(false)
     setPaletteData(null)
     setToUnicodeData(null)
     setFontDescData(null)
@@ -300,9 +303,39 @@ const DetailPane: React.FC<Props> = ({ node, chain, uploadId, onJumpToObj, onSel
             )}
 
             {!canShowImage && !iccData && contentStreamData && (
-              <div className="detail-cs-section">
-                <ContentStreamPane data={contentStreamData} uploadId={uploadId ?? undefined} />
-              </div>
+              aiChatOpen && uploadId && node ? (
+                <PanelGroup direction="horizontal" autoSaveId="cs-ai-split" className="cs-ai-split">
+                  <Panel defaultSize={50} minSize={25}>
+                    <ContentStreamPane
+                      data={contentStreamData}
+                      uploadId={uploadId ?? undefined}
+                      objNum={node.obj_num}
+                      objGen={node.gen_num}
+                      aiChatOpen={aiChatOpen}
+                      onToggleAiChat={() => setAiChatOpen(v => !v)}
+                    />
+                  </Panel>
+                  <PanelResizeHandle className="resize-handle" />
+                  <Panel defaultSize={50} minSize={25}>
+                    <AiChatPane
+                      uploadId={uploadId}
+                      objNum={node.obj_num}
+                      objGen={node.gen_num}
+                    />
+                  </Panel>
+                </PanelGroup>
+              ) : (
+                <div className="detail-cs-section">
+                  <ContentStreamPane
+                    data={contentStreamData}
+                    uploadId={uploadId ?? undefined}
+                    objNum={node?.obj_num}
+                    objGen={node?.gen_num}
+                    aiChatOpen={aiChatOpen}
+                    onToggleAiChat={uploadId ? () => setAiChatOpen(v => !v) : undefined}
+                  />
+                </div>
+              )
             )}
 
             {!canShowImage && !iccData && !contentStreamData && paletteData && (

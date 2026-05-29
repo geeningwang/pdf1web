@@ -717,3 +717,69 @@ export async function fetchHintStream(
   if (!res.ok) return null
   return res.json()
 }
+
+/* -----------------------------------------------------------------------
+   AI Agent types
+   ----------------------------------------------------------------------- */
+
+export type AgentStepType =
+  | 'thinking'
+  | 'llm_request'
+  | 'llm_response'
+  | 'validation'
+  | 'retry'
+  | 'relink'
+
+export interface AgentStep {
+  type: AgentStepType
+  round?: number
+  status?: 'ok' | 'fail'
+  text?: string
+  detail?: string
+}
+
+export interface AgentDone {
+  reply: string
+  new_pdfs: string
+  diff: string
+  download_url: string
+}
+
+export interface ChatTurn {
+  role: 'user' | 'agent'
+  // user turns
+  text?: string
+  // agent turns (streamed)
+  steps?: AgentStep[]
+  reply?: string
+  diff?: string
+  downloadUrl?: string
+  error?: string
+}
+
+export interface AgentProviderInfo {
+  id: string
+  name: string
+  models: string[]
+}
+
+export interface AgentConfigResponse {
+  providers: AgentProviderInfo[]
+  default_provider: string
+  default_model: string
+}
+
+export async function fetchAgentConfig(): Promise<AgentConfigResponse | null> {
+  const res = await fetch(`${BASE}/agent/config`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+export function agentDownloadUrl(uploadId: string, objNum: number, objGen: number): string {
+  return `${BASE}/agent/download/${uploadId}/${objNum}/${objGen}/modified.pdf`
+}
+
+export async function agentUndo(uploadId: string): Promise<{ ok: boolean; new_pdfs?: string; download_url?: string; error?: string }> {
+  const res = await fetch(`${BASE}/agent/undo/${uploadId}`, { method: 'POST' })
+  return res.json()
+}
