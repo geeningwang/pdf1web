@@ -38,6 +38,13 @@ KNOWN_PROVIDERS: dict[str, dict] = {
         "default_model": "claude-opus-4-5",
         "style": "anthropic",
     },
+    "kimi": {
+        "name": "Kimi (Moonshot AI)",
+        "base_url": "https://api.moonshot.cn/v1",
+        "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
+        "default_model": "moonshot-v1-8k",
+        "style": "openai",          # Kimi is OpenAI-compatible
+    },
     "custom": {
         "name": "Custom (OpenAI-compatible)",
         "base_url": "",
