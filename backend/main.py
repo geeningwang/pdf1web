@@ -610,6 +610,108 @@ async def link_pdfx(file: UploadFile = File(...)) -> Response:
     )
 
 
+# ---------------------------------------------------------------------------
+# AI Agent endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/agent/config")
+def agent_config() -> dict:
+    """Return available LLM providers and models (no API keys exposed)."""
+    from pdf.llm_config import list_providers, KNOWN_PROVIDERS, _load_file_config
+    file_cfg = _load_file_config()
+    default_provider = (
+        os.environ.get("LLM_PROVIDER")
+        or file_cfg.get("default_provider")
+        or "openai"
+    )
+    default_model = (
+        os.environ.get("LLM_MODEL")
+        or file_cfg.get("providers", {}).get(default_provider, {}).get("default_model")
+        or KNOWN_PROVIDERS.get(default_provider, {}).get("default_model", "")
+    )
+    providers = [
+        {"id": p.id, "name": p.name, "models": p.models}
+        for p in list_providers()
+    ]
+    return {
+        "providers": providers,
+        "default_provider": default_provider,
+        "default_model": default_model,
+    }
+
+
+@app.get("/api/agent/chat")
+async def agent_chat(
+    upload_id: str,
+    obj_num: int,
+    obj_gen: int,
+    message: str,
+    history: str = "[]",
+    provider: str | None = None,
+    model: str | None = None,
+):
+    """Stream AI agent inner-loop steps as Server-Sent Events.
+
+    The client opens this as an EventSource (GET + query params).
+    Each SSE frame is: event: <type>\\ndata: <json>\\n\\n
+    """
+    import json as _json
+    from fastapi.responses import StreamingResponse
+    from pdf.agent_service import chat as agent_chat_gen
+
+    try:
+        parsed_history = _json.loads(history)
+    except Exception:
+        parsed_history = []
+
+    async def event_stream():
+        async for event in agent_chat_gen(
+            upload_id=upload_id,
+            obj_num=obj_num,
+            obj_gen=obj_gen,
+            user_message=message,
+            history=parsed_history,
+            provider=provider,
+            model=model,
+        ):
+            data_str = _json.dumps(event.data, ensure_ascii=False)
+            yield f"event: {event.event}\ndata: {data_str}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/agent/download/{upload_id}/{obj_num}/{obj_gen}/modified.pdf")
+def agent_download(upload_id: str, obj_num: int, obj_gen: int) -> Response:
+    """Return the latest agent-modified PDF for this session."""
+    from pdf.agent_service import _agent_sessions
+    session = _agent_sessions.get(upload_id)
+    if session is None or not session.current_pdf.exists():
+        raise HTTPException(404, "No modified PDF available — run the agent first")
+    pdf_bytes = session.current_pdf.read_bytes()
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="modified.pdf"'},
+    )
+
+
+@app.post("/api/agent/undo/{upload_id}")
+async def agent_undo(upload_id: str) -> dict:
+    """Revert the last agent edit for this session."""
+    from pdf.agent_service import undo as agent_undo_fn
+    result = await agent_undo_fn(upload_id)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Undo failed"))
+    return result
+
+
 @app.get("/api/object/{upload_id}/{num}/{gen}")
 def get_object(upload_id: str, num: int, gen: int) -> dict[str, Any]:
     """Return the detailed text for a specific PDF object (lazy load)."""
