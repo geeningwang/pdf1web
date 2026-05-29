@@ -112,6 +112,38 @@ def _get_or_create_session(upload_id: str) -> AgentSession:
     return session
 
 
+def _resolve_stream_obj(session: AgentSession, obj_num: int, obj_gen: int) -> tuple[int, int]:
+    """If obj is a Contents array, return the first stream ref inside it.
+
+    PDF pages often have a /Contents key pointing to an array such as
+    [11 0 R  12 0 R ...].  The array itself has no .pdfs; its element streams do.
+    This helper reads the .pdfjson and, if the object is an Array, follows the
+    first reference to find the actual stream object.
+    """
+    import json, re
+    fname = f"obj_{obj_num:05d}_{obj_gen}.pdfjson"
+    p = session.pdfx_dir / "objects" / fname
+    if not p.exists():
+        return obj_num, obj_gen
+
+    meta = json.loads(p.read_text(encoding="utf-8"))
+    # If _type is Array, the .pdfjson looks like:
+    #   {"_obj": "4 0", "_type": "Array", "_stream": "none"}
+    # The actual content is in the .pdfo (raw bytes) but we need to look at
+    # the exporter for array-of-refs structure.  Instead, scan for any
+    # .pdfs files whose obj number follows immediately (heuristic: pick the
+    # lowest-numbered .pdfs in the export dir).
+    if meta.get("_type") == "Array":
+        pdfs_files = sorted(session.pdfx_dir.glob("objects/*.pdfs"))
+        if pdfs_files:
+            stem = pdfs_files[0].stem  # e.g. "obj_00011_0"
+            m = re.match(r"obj_(\d+)_(\d+)$", stem)
+            if m:
+                return int(m.group(1)), int(m.group(2))
+
+    return obj_num, obj_gen
+
+
 def _get_current_pdfs(session: AgentSession, obj_num: int, obj_gen: int) -> str:
     """Return the current decoded content stream text for the object."""
     fname = f"obj_{obj_num:05d}_{obj_gen}.pdfs"
@@ -420,9 +452,18 @@ async def chat(
     yield _step("thinking", text="Gathering context…")
     try:
         session = _get_or_create_session(upload_id)
+        # If the selected object is a Contents array, resolve to the first stream
+        obj_num, obj_gen = _resolve_stream_obj(session, obj_num, obj_gen)
         session.active_obj = (obj_num, obj_gen)
         current_pdfs = _get_current_pdfs(session, obj_num, obj_gen)
         obj_json = _get_obj_json(session, obj_num, obj_gen)
+    except FileNotFoundError:
+        yield _error(
+            f"Object {obj_num} {obj_gen} is not a content stream. "
+            "Please open a content stream object (e.g. a Page's stream) "
+            "and click ✦ AI Edit from there."
+        )
+        return
     except Exception as exc:
         yield _error(f"Context gathering failed: {exc}")
         return
