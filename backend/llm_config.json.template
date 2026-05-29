@@ -1,5 +1,5 @@
 {
-  "default_provider": "kimi",
+  "default_provider": "kimi_code",
   "providers": {
     "openai": {
       "api_key": "",
@@ -16,6 +16,12 @@
     "kimi": {
       "api_key": "",
       "default_model": "moonshot-v1-8k",
+      "max_tokens": 4096,
+      "timeout": 60
+    },
+    "kimi_code": {
+      "api_key": "",
+      "default_model": "kimi-for-coding",
       "max_tokens": 4096,
       "timeout": 60
     },
