@@ -11,6 +11,9 @@ __pycache__/
 # Node
 frontend/node_modules/
 
+# LLM API keys
+backend/llm_config.json
+
 # User data — uploaded/stored PDFs and analysis logs
 backend/uploads/
 backend/store/
