@@ -17,4 +17,5 @@ backend/llm_config.json
 # User data — uploaded/stored PDFs and analysis logs
 backend/uploads/
 backend/store/
+backend/store.export/
 backend/static/Godot_*.zip

@@ -51,6 +51,10 @@ _UPLOADS_DIR.mkdir(exist_ok=True)
 _STORE_DIR = Path(__file__).parent / "store"
 _STORE_DIR.mkdir(exist_ok=True)
 
+# Directory for persistently stored exports (.pdfx dirs and relinked PDFs)
+_STORE_EXPORT_DIR = Path(__file__).parent / "store.export"
+_STORE_EXPORT_DIR.mkdir(exist_ok=True)
+
 # Serve built frontend static files if the dist folder exists
 _DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
