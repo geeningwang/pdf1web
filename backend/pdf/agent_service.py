@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 MAX_ROUNDS = 3
 
+# Set to True to show full HTTP request/response bodies in the AI Edit chat pane.
+# Flip to False to silence the HTTP log without removing the instrumentation.
+DEBUG_HTTP: bool = True
+
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
@@ -332,13 +336,23 @@ def _build_messages(
 _PDFS_RE = re.compile(r"<pdfs>(.*?)</pdfs>", re.DOTALL)
 
 
-def _parse_response(text: str) -> tuple[str | None, str]:
+def _parse_response(text: str, finish_reason: str = "") -> tuple[str | None, str]:
     """Extract (new_pdfs, explanation) from LLM response text.
 
     Returns (None, "") if no <pdfs> block is found.
+
+    When finish_reason is 'length' the response may be truncated before the
+    closing </pdfs> tag.  In that case we accept the partial content — the
+    caller's validation step will catch any structural problems.
     """
     m = _PDFS_RE.search(text)
     if not m:
+        # Truncation fallback: LLM hit token limit mid-block
+        if finish_reason == "length":
+            open_tag = text.find("<pdfs>")
+            if open_tag != -1:
+                new_pdfs = text[open_tag + 6:].lstrip("\n")
+                return new_pdfs, ""
         return None, ""
     new_pdfs = m.group(1)
     # Strip a single leading/trailing newline (LLM formatting habit)
@@ -438,6 +452,7 @@ async def chat(
     history: list[dict],
     provider: str | None = None,
     model: str | None = None,
+    debug_http: bool = True,
 ) -> AsyncGenerator[AgentEvent, None]:
     """Async generator — yields AgentEvent objects as the agent works."""
 
@@ -489,14 +504,30 @@ async def chat(
         )
 
         prompt_chars = sum(len(m.get("content", "")) for m in messages)
+
+        if debug_http:
+            _req_body = json.dumps(
+                {"model": cfg.model, "max_tokens": cfg.max_tokens,
+                 "stream": True, "messages": messages},
+                ensure_ascii=False, indent=2,
+            )
+            _req_detail = (
+                f"=== HTTP REQUEST ===\n"
+                f"POST {cfg.base_url}/chat/completions\n"
+                f"Authorization: Bearer ***redacted***\n"
+                f"Content-Type: application/json\n\n"
+                f"{_req_body}"
+            )
+        else:
+            _req_detail = (
+                f"provider: {cfg.provider}  model: {cfg.model}\n"
+                f"base_url: {cfg.base_url}\n"
+                f"max_tokens: {cfg.max_tokens}  timeout: {cfg.timeout}s\n"
+                f"messages: {len(messages)}  prompt_chars: {prompt_chars}"
+            )
         yield _step("llm_request", round=round_num,
                     text=f"Sending request to LLM (round {round_num})",
-                    detail=(
-                        f"provider: {cfg.provider}  model: {cfg.model}\n"
-                        f"base_url: {cfg.base_url}\n"
-                        f"max_tokens: {cfg.max_tokens}  timeout: {cfg.timeout}s\n"
-                        f"messages: {len(messages)}  prompt_chars: {prompt_chars}"
-                    ))
+                    detail=_req_detail)
 
         try:
             llm_text, debug_info = await llm_complete(messages, cfg)
@@ -508,6 +539,18 @@ async def chat(
             )
             return
 
+        if debug_http:
+            _resp_detail = (
+                f"=== HTTP RESPONSE ===\n"
+                f"Status: {debug_info.get('http_status', 200)}\n"
+                f"Elapsed: {debug_info.get('elapsed', '?')}\n"
+                f"finish_reason: {debug_info.get('finish_reason', '?')}\n"
+                f"usage: {json.dumps(debug_info.get('usage', {}))}\n\n"
+                f"=== LLM TEXT ===\n"
+                f"{llm_text}"
+            )
+        else:
+            _resp_detail = llm_text
         yield _step("llm_response", round=round_num,
                     text=(
                         f"Response received — "
@@ -515,9 +558,11 @@ async def chat(
                         f"finish={debug_info.get('finish_reason','?')}  "
                         f"usage={debug_info.get('usage',{})}"
                     ),
-                    detail=llm_text)
+                    detail=_resp_detail)
 
-        new_pdfs, explanation = _parse_response(llm_text)
+        new_pdfs, explanation = _parse_response(
+            llm_text, finish_reason=debug_info.get("finish_reason", "")
+        )
         if new_pdfs is None:
             msg = "LLM response contained no <pdfs>…</pdfs> block"
             prior_errors.append(msg)

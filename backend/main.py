@@ -653,6 +653,7 @@ async def agent_chat(
     history: str = "[]",
     provider: str | None = None,
     model: str | None = None,
+    debug_http: bool = True,
 ):
     """Stream AI agent inner-loop steps as Server-Sent Events.
 
@@ -677,6 +678,7 @@ async def agent_chat(
             history=parsed_history,
             provider=provider,
             model=model,
+            debug_http=debug_http,
         ):
             data_str = _json.dumps(event.data, ensure_ascii=False)
             yield f"event: {event.event}\ndata: {data_str}\n\n"

@@ -226,6 +226,7 @@ const AiChatPane: React.FC<Props> = ({ uploadId, objNum, objGen }) => {
   const [provider, setProvider] = useState('openai')
   const [model, setModel] = useState('gpt-4o-mini')
   const [canUndo, setCanUndo] = useState(false)
+  const [debugHttp, setDebugHttp] = useState(true)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
@@ -311,6 +312,7 @@ const AiChatPane: React.FC<Props> = ({ uploadId, objNum, objGen }) => {
       history: JSON.stringify(history),
       provider,
       model,
+      debug_http: String(debugHttp),
     })
     const url = `/api/agent/chat?${params}`
 
@@ -337,7 +339,7 @@ const AiChatPane: React.FC<Props> = ({ uploadId, objNum, objGen }) => {
       }
       es.close()
     })
-  }, [input, busy, turns, uploadId, objNum, objGen, provider, model, appendStep, finishTurn])
+  }, [input, busy, turns, uploadId, objNum, objGen, provider, model, debugHttp, appendStep, finishTurn])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -375,6 +377,13 @@ const AiChatPane: React.FC<Props> = ({ uploadId, objNum, objGen }) => {
             onProviderChange={setProvider}
             onModelChange={setModel}
           />
+          <button
+            className={`btn-ai-debug${debugHttp ? ' active' : ''}`}
+            onClick={() => setDebugHttp(v => !v)}
+            title={debugHttp ? 'Debug mode on — click to disable' : 'Debug mode off — click to enable'}
+          >
+            {debugHttp ? '🐛 Debug' : '🐛'}
+          </button>
         </div>
       </div>
 

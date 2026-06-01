@@ -115,6 +115,8 @@ async def _complete_openai(messages: list[dict], cfg: LLMConfig) -> tuple[str, d
         "usage": usage,
         "content_len": len("".join(content_parts)),
         "reasoning_len": len("".join(reasoning_parts)),
+        "http_status": 200,
+        "http_request_body": payload,
     }
     if not content:
         raise RuntimeError(
@@ -147,8 +149,9 @@ def _openai_to_anthropic(messages: list[dict]) -> tuple[str | None, list[dict]]:
     return system, turns
 
 
-async def _complete_anthropic(messages: list[dict], cfg: LLMConfig) -> str:
-    """POST to Anthropic /v1/messages."""
+async def _complete_anthropic(messages: list[dict], cfg: LLMConfig) -> tuple[str, dict]:
+    """POST to Anthropic /v1/messages.  Returns (content_text, debug_info)."""
+    import time
     system, turns = _openai_to_anthropic(messages)
 
     url = f"{cfg.base_url}/v1/messages"
@@ -166,22 +169,39 @@ async def _complete_anthropic(messages: list[dict], cfg: LLMConfig) -> str:
         "Content-Type": "application/json",
     }
     timeout = aiohttp.ClientTimeout(total=cfg.timeout)
+    t0 = time.monotonic()
+    http_status = 0
+    raw_response = ""
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.post(url, json=payload, headers=headers) as resp:
-            text = await resp.text()
+            http_status = resp.status
+            raw_response = await resp.text()
             if resp.status != 200:
                 raise RuntimeError(
-                    f"Anthropic API error {resp.status}: {text[:500]}"
+                    f"Anthropic API error {resp.status}: {raw_response[:500]}"
                 )
-            body = json.loads(text)
+            body = json.loads(raw_response)
+    elapsed = time.monotonic() - t0
     try:
-        # content is a list of blocks; grab the first text block
+        content = ""
         for block in body["content"]:
             if block.get("type") == "text":
-                return block["text"]
-        raise RuntimeError("No text block in Anthropic response")
+                content = block["text"]
+                break
+        if not content:
+            raise RuntimeError("No text block in Anthropic response")
     except (KeyError, TypeError) as exc:
         raise RuntimeError(f"Unexpected Anthropic response shape: {body}") from exc
+    debug_info = {
+        "url": url,
+        "model": cfg.model,
+        "elapsed": f"{elapsed:.1f}s",
+        "http_status": http_status,
+        "http_request_body": payload,
+        "finish_reason": body.get("stop_reason", "?"),
+        "usage": body.get("usage", {}),
+    }
+    return content, debug_info
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +221,6 @@ async def complete(messages: list[dict], cfg: LLMConfig) -> tuple[str, dict]:
         cfg.provider, cfg.model, len(messages),
     )
     if cfg.style == "anthropic":
-        text = await _complete_anthropic(messages, cfg)
-        return text, {"style": "anthropic"}
+        return await _complete_anthropic(messages, cfg)
     else:
         return await _complete_openai(messages, cfg)

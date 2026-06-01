@@ -2852,6 +2852,23 @@ tr:hover .hs-page-click-hint { opacity: 1; }
 }
 .btn-ai-undo:hover { border-color: var(--accent); color: var(--text); }
 
+.btn-ai-debug {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0.5;
+}
+.btn-ai-debug.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  opacity: 1;
+}
+.btn-ai-debug:hover { border-color: var(--accent); opacity: 1; }
+
 /* Make detail-cs-section fill height when AI split is open */
 .detail-cs-section {
   display: flex;
