@@ -18,6 +18,7 @@ Inner loop (up to MAX_ROUNDS):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -444,6 +445,68 @@ def _make_diff(old: str, new: str) -> str:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+# Keywords that strongly suggest the user wants to modify the PDF content stream.
+_EDIT_RE = re.compile(
+    r'\b(move|shift|change|modify|edit|update|replace|remove|delete|add|insert|'
+    r'make|set|turn|rotate|scale|resize|translate|adjust|fix|correct|rewrite|'
+    r'color|colour|font|size|text|position|align|center|left|right|bold|italic|'
+    r'increase|decrease|bigger|smaller|larger|top|bottom|'
+    r'margin|indent|spacing|background|fill|stroke|opacity|border|underline)\b',
+    re.IGNORECASE,
+)
+
+
+def _classify_intent(message: str) -> str:
+    """Return 'edit' if the message looks like a PDF editing request, 'chat' otherwise."""
+    return 'edit' if _EDIT_RE.search(message) else 'chat'
+
+
+async def _run_llm_streaming(
+    messages: list[dict], cfg: LLMConfig
+) -> AsyncGenerator[AgentEvent, None]:
+    """Yield ``llm_chunk`` step events as tokens arrive, then a sentinel event.
+
+    The caller distinguishes the final two internal events:
+      ``_result`` — data has keys ``text`` and ``debug_info``
+      ``_error``  — data has keys ``exc`` and ``tb``
+    """
+    chunk_queue: asyncio.Queue[str] = asyncio.Queue()
+
+    def on_chunk(ch: str) -> None:  # called synchronously from within _complete_openai
+        chunk_queue.put_nowait(ch)
+
+    loop = asyncio.get_running_loop()
+    llm_task = asyncio.create_task(llm_complete(messages, cfg, on_chunk=on_chunk))
+
+    batch: list[str] = []
+    t_last = loop.time()
+
+    while not llm_task.done():
+        # Drain whatever has accumulated in the queue
+        while not chunk_queue.empty():
+            batch.append(chunk_queue.get_nowait())
+        now = loop.time()
+        # Flush to frontend at most ~10 times per second
+        if batch and now - t_last >= 0.1:
+            yield AgentEvent("step", {"type": "llm_chunk", "text": "".join(batch)})
+            batch.clear()
+            t_last = now
+        await asyncio.sleep(0.02)
+
+    # Drain any remaining tokens
+    while not chunk_queue.empty():
+        batch.append(chunk_queue.get_nowait())
+    if batch:
+        yield AgentEvent("step", {"type": "llm_chunk", "text": "".join(batch)})
+
+    import traceback as _tb
+    try:
+        llm_text, debug_info = llm_task.result()
+        yield AgentEvent("_result", {"text": llm_text, "debug_info": debug_info})
+    except Exception as exc:
+        yield AgentEvent("_error", {"exc": exc, "tb": _tb.format_exc()})
+
+
 async def chat(
     upload_id: str,
     obj_num: int,
@@ -461,6 +524,70 @@ async def chat(
         cfg: LLMConfig = get_llm_config(provider, model)
     except ValueError as exc:
         yield _error(str(exc))
+        return
+
+    # --- Intent classification ---
+    # Skip the heavy PDF-editing pipeline for conversational messages.
+    intent = _classify_intent(user_message)
+
+    if intent == 'chat':
+        chat_msgs: list[dict] = [
+            {"role": "system", "content": (
+                "You are a helpful assistant embedded in a PDF content stream editor. "
+                "Answer the user's question naturally. "
+                "If they want to modify the PDF, let them know they can just describe "
+                "the change and you will apply it to the content stream."
+            )},
+            *history,
+            {"role": "user", "content": user_message},
+        ]
+        if debug_http:
+            _req_detail: str = (
+                f"=== HTTP REQUEST (chat mode) ===\n"
+                f"POST {cfg.base_url}/chat/completions\n"
+                f"Authorization: Bearer ***redacted***\n"
+                f"Content-Type: application/json\n\n"
+                + json.dumps(
+                    {"model": cfg.model, "max_tokens": cfg.max_tokens,
+                     "stream": True, "messages": chat_msgs},
+                    ensure_ascii=False, indent=2,
+                )
+            )
+        else:
+            _req_detail = (
+                f"provider: {cfg.provider}  model: {cfg.model}\n"
+                f"mode: chat (no PDF context)"
+            )
+        yield _step("thinking", text="Chat mode — skipping PDF context")
+        yield _step("llm_request", text="Sending to LLM…", detail=_req_detail)
+        _llm_text: str | None = None
+        _debug_info: dict = {}
+        async for _ev in _run_llm_streaming(chat_msgs, cfg):
+            if _ev.event == "step":
+                yield _ev
+            elif _ev.event == "_result":
+                _llm_text = _ev.data["text"]
+                _debug_info = _ev.data["debug_info"]
+            elif _ev.event == "_error":
+                yield _error(f"LLM call failed: {_ev.data['exc']}\n\n{_ev.data['tb']}")
+                return
+        if _llm_text is None:
+            return
+        if debug_http:
+            _resp_detail: str = (
+                f"=== HTTP RESPONSE ===\n"
+                f"Status: {_debug_info.get('http_status', 200)}\n"
+                f"Elapsed: {_debug_info.get('elapsed', '?')}\n"
+                f"finish_reason: {_debug_info.get('finish_reason', '?')}\n"
+                f"usage: {json.dumps(_debug_info.get('usage', {}))}\n\n"
+                f"=== LLM TEXT ===\n{_llm_text}"
+            )
+        else:
+            _resp_detail = _llm_text
+        yield _step("llm_response",
+                    text=f"Response — {_debug_info.get('elapsed', '?')}",
+                    detail=_resp_detail)
+        yield _done(reply=_llm_text)
         return
 
     # --- Session / context setup ---
@@ -529,14 +656,20 @@ async def chat(
                     text=f"Sending request to LLM (round {round_num})",
                     detail=_req_detail)
 
-        try:
-            llm_text, debug_info = await llm_complete(messages, cfg)
-        except Exception as exc:
-            import traceback
-            yield _error(
-                f"LLM call failed: {type(exc).__name__}: {exc}\n\n"
-                f"Traceback:\n{traceback.format_exc()}"
-            )
+        # --- LLM call with real-time token streaming ---
+        llm_text: str | None = None
+        debug_info: dict = {}
+        async for _ev in _run_llm_streaming(messages, cfg):
+            if _ev.event == "step":
+                yield _ev
+            elif _ev.event == "_result":
+                llm_text = _ev.data["text"]
+                debug_info = _ev.data["debug_info"]
+            elif _ev.event == "_error":
+                yield _error(
+                    f"LLM call failed: {_ev.data['exc']}\n\n{_ev.data['tb']}")
+                return
+        if llm_text is None:
             return
 
         if debug_http:
@@ -564,6 +697,14 @@ async def chat(
             llm_text, finish_reason=debug_info.get("finish_reason", "")
         )
         if new_pdfs is None:
+            # If the LLM finished normally without an edit block it gave a
+            # conversational answer (e.g. asking for clarification or answering
+            # a question). Treat it as a chat reply rather than a failure.
+            if debug_info.get("finish_reason") == "stop":
+                yield _step("validation", round=round_num, status="ok",
+                            text="LLM answered conversationally — no content stream changes")
+                yield _done(reply=llm_text)
+                return
             msg = "LLM response contained no <pdfs>…</pdfs> block"
             prior_errors.append(msg)
             yield _step("validation", round=round_num,

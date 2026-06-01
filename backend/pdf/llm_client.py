@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # OpenAI-style request / response
 # ---------------------------------------------------------------------------
 
-async def _complete_openai(messages: list[dict], cfg: LLMConfig) -> tuple[str, dict]:
+async def _complete_openai(messages: list[dict], cfg: LLMConfig, on_chunk=None) -> tuple[str, dict]:
     """POST to {base_url}/chat/completions with stream=true (OpenAI shape).
 
     Uses httpx.AsyncClient which integrates cleanly with uvicorn/asyncio —
@@ -95,6 +95,8 @@ async def _complete_openai(messages: list[dict], cfg: LLMConfig) -> tuple[str, d
                     delta = choices[0].get("delta", {})
                     if delta.get("content"):
                         content_parts.append(delta["content"])
+                        if on_chunk is not None:
+                            on_chunk(delta["content"])
                     if delta.get("reasoning_content"):
                         reasoning_parts.append(delta["reasoning_content"])
                     fr = choices[0].get("finish_reason")
@@ -208,11 +210,15 @@ async def _complete_anthropic(messages: list[dict], cfg: LLMConfig) -> tuple[str
 # Public entry point
 # ---------------------------------------------------------------------------
 
-async def complete(messages: list[dict], cfg: LLMConfig) -> tuple[str, dict]:
+async def complete(messages: list[dict], cfg: LLMConfig, on_chunk=None) -> tuple[str, dict]:
     """Send *messages* to the configured LLM and return (assistant_text, debug_info).
 
     *messages* follows the OpenAI format:
       [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
+
+    If *on_chunk* is provided it is called synchronously with each decoded text
+    token as it arrives from the server (OpenAI-style streaming only; Anthropic
+    calls are not yet streamed token-by-token).
 
     Raises RuntimeError on API errors or unexpected response shapes.
     """
@@ -223,4 +229,4 @@ async def complete(messages: list[dict], cfg: LLMConfig) -> tuple[str, dict]:
     if cfg.style == "anthropic":
         return await _complete_anthropic(messages, cfg)
     else:
-        return await _complete_openai(messages, cfg)
+        return await _complete_openai(messages, cfg, on_chunk=on_chunk)

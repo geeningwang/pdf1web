@@ -726,6 +726,7 @@ export type AgentStepType =
   | 'thinking'
   | 'llm_request'
   | 'llm_response'
+  | 'llm_chunk'    // streaming token batch — not shown in timeline, accumulated in turn
   | 'validation'
   | 'retry'
   | 'relink'
@@ -751,6 +752,7 @@ export interface ChatTurn {
   text?: string
   // agent turns (streamed)
   steps?: AgentStep[]
+  streamingContent?: string  // accumulates llm_chunk text while the LLM responds
   reply?: string
   diff?: string
   downloadUrl?: string

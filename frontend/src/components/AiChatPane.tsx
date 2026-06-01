@@ -47,6 +47,23 @@ function DiffView({ unified }: { unified: string }) {
   )
 }
 
+function buildAgentCopyText(turn: ChatTurn): string {
+  const sections: string[] = []
+  const requestResponseSteps = (turn.steps ?? []).filter(
+    step => step.type === 'llm_request' || step.type === 'llm_response',
+  )
+
+  for (const step of requestResponseSteps) {
+    const title = `=== ${step.type === 'llm_request' ? 'REQUEST' : 'RESPONSE'}${step.round != null ? ` R${step.round}` : ''} ===`
+    const body = step.detail?.trim() || step.text?.trim()
+    if (body) {
+      sections.push(`${title}\n\n${body}`)
+    }
+  }
+
+  return sections.join('\n\n')
+}
+
 // ------------------------------------------------------------------ step timeline
 
 interface StepTimelineProps {
@@ -115,6 +132,8 @@ interface TurnViewProps {
 }
 
 const TurnView: React.FC<TurnViewProps> = ({ turn, onDownload }) => {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+
   if (turn.role === 'user') {
     return (
       <div className="ai-turn ai-turn-user">
@@ -126,13 +145,43 @@ const TurnView: React.FC<TurnViewProps> = ({ turn, onDownload }) => {
 
   const done = !!turn.reply || !!turn.error
   const hasDiff = !!turn.diff
+  const copyText = buildAgentCopyText(turn)
+
+  const handleCopy = async () => {
+    if (!copyText) return
+    try {
+      await navigator.clipboard.writeText(copyText)
+      setCopyState('copied')
+      window.setTimeout(() => setCopyState('idle'), 1500)
+    } catch {
+      setCopyState('failed')
+      window.setTimeout(() => setCopyState('idle'), 1500)
+    }
+  }
 
   return (
     <div className="ai-turn ai-turn-agent">
-      <span className="ai-turn-label">Agent</span>
+      <div className="ai-turn-head">
+        <span className="ai-turn-label">Agent</span>
+        <button
+          className="btn-ai-copy"
+          onClick={handleCopy}
+          disabled={!copyText}
+          title={copyText ? 'Copy request and response for this agent turn' : 'Nothing to copy yet'}
+        >
+          {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy'}
+        </button>
+      </div>
 
       {turn.steps && turn.steps.length > 0 && (
         <StepTimeline steps={turn.steps} done={done} />
+      )}
+
+      {/* Live token streaming — visible while the LLM is generating */}
+      {!done && turn.streamingContent && (
+        <div className="ai-streaming">
+          <pre className="ai-streaming-text">{turn.streamingContent}<span className="ai-cursor">▌</span></pre>
+        </div>
       )}
 
       {turn.error && (
@@ -255,11 +304,31 @@ const AiChatPane: React.FC<Props> = ({ uploadId, objNum, objGen }) => {
   }, [turns])
 
   const appendStep = useCallback((step: AgentStep) => {
+    // llm_chunk events are not shown in the timeline — they accumulate as
+    // streaming text that disappears once the final reply arrives.
+    if (step.type === 'llm_chunk') {
+      setTurns(prev => {
+        const next = [...prev]
+        const last = next[next.length - 1]
+        if (last?.role === 'agent') {
+          next[next.length - 1] = {
+            ...last,
+            streamingContent: (last.streamingContent ?? '') + (step.text ?? ''),
+          }
+          return next
+        }
+        return prev
+      })
+      return
+    }
     setTurns(prev => {
       const next = [...prev]
       const last = next[next.length - 1]
       if (last?.role === 'agent') {
-        last.steps = [...(last.steps ?? []), step]
+        next[next.length - 1] = {
+          ...last,
+          steps: [...(last.steps ?? []), step],
+        }
         return next
       }
       return prev
@@ -271,10 +340,14 @@ const AiChatPane: React.FC<Props> = ({ uploadId, objNum, objGen }) => {
       const next = [...prev]
       const last = next[next.length - 1]
       if (last?.role === 'agent') {
-        last.reply = data.reply
-        last.diff = data.diff
-        last.downloadUrl = data.download_url
-        last.error = data.error
+        next[next.length - 1] = {
+          ...last,
+          reply: data.reply,
+          diff: data.diff,
+          downloadUrl: data.download_url,
+          error: data.error,
+          streamingContent: undefined,
+        }
         return next
       }
       return prev
